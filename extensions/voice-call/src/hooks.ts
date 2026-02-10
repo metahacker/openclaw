@@ -60,10 +60,10 @@ export interface VoiceCallHooks {
    * Useful for converting markdown action markers to provider-specific
    * tags (e.g., ElevenLabs v3 audio tags).
    *
-   * Return the transformed text. If undefined is returned, the original
-   * text is used unchanged.
+   * Return the transformed text, or `undefined` to use the original
+   * text unchanged.
    */
-  transformTtsText?: (text: string) => string;
+  transformTtsText?: (text: string) => string | undefined;
 
   /**
    * Called when a call disconnects.

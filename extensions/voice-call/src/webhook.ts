@@ -31,8 +31,11 @@ export class VoiceCallWebhookServer {
   /** Optional hooks for extending call behavior */
   private hooks: VoiceCallHooks;
 
-  /** Debounce state per provider call ID (transcript buffering) */
-  private debounceBuffers = new Map<string, { chunks: string[]; timer: NodeJS.Timeout | null }>();
+  /** Debounce state per provider call ID → { internal callId, buffered chunks, timer } */
+  private debounceBuffers = new Map<
+    string,
+    { callId: string; chunks: string[]; timer: NodeJS.Timeout | null }
+  >();
 
   constructor(
     config: VoiceCallConfig,
@@ -83,13 +86,9 @@ export class VoiceCallWebhookServer {
       shouldAcceptStream: ({ callId, token }) => {
         const call = this.manager.getCallByProviderCallId(callId);
         if (!call) {
-          // PEAR patch: auto-accept streams for calls we know about via provider ID
-          console.log(
-            `[voice-call] Stream for unknown call ${callId} — accepting (skipSignatureVerification mode)`,
-          );
-          return this.config.skipSignatureVerification ?? false;
+          return false;
         }
-        if (this.provider.name === "twilio" && !this.config.skipSignatureVerification) {
+        if (this.provider.name === "twilio") {
           const twilio = this.provider as TwilioProvider;
           if (!twilio.isValidStreamToken(callId, token)) {
             console.warn(`[voice-call] Rejecting media stream: invalid token for ${callId}`);
@@ -387,6 +386,9 @@ export class VoiceCallWebhookServer {
    * window elapses with no new chunks. This prevents multiple agent calls
    * when STT produces several transcript segments for one spoken sentence.
    */
+  /** Maximum number of transcript chunks to buffer before force-flushing */
+  private static readonly MAX_DEBOUNCE_CHUNKS = 50;
+
   private debounceTranscript(
     providerCallId: string,
     callId: string,
@@ -395,7 +397,7 @@ export class VoiceCallWebhookServer {
   ): void {
     let buf = this.debounceBuffers.get(providerCallId);
     if (!buf) {
-      buf = { chunks: [], timer: null };
+      buf = { callId, chunks: [], timer: null };
       this.debounceBuffers.set(providerCallId, buf);
     }
 
@@ -406,32 +408,55 @@ export class VoiceCallWebhookServer {
       clearTimeout(buf.timer);
     }
 
+    // Force-flush if buffer is getting too large (safety valve)
+    if (buf.chunks.length >= VoiceCallWebhookServer.MAX_DEBOUNCE_CHUNKS) {
+      this.flushDebounce(providerCallId);
+      return;
+    }
+
     buf.timer = setTimeout(() => {
-      const pending = buf!.chunks.join(" ").trim();
-      buf!.chunks = [];
-      buf!.timer = null;
-
-      if (!pending) {
-        return;
-      }
-
-      console.log(`[voice-call] Debounced utterance for ${providerCallId}: "${pending}"`);
-      this.handleInboundResponse(callId, pending).catch((err) => {
-        console.warn(`[voice-call] Failed to auto-respond (debounced):`, err);
-      });
+      this.flushDebounce(providerCallId);
     }, debounceMs);
   }
 
   /**
-   * Clean up debounce buffers for a disconnected call.
+   * Flush a debounce buffer — join chunks and trigger response.
+   */
+  private flushDebounce(providerCallId: string): void {
+    const buf = this.debounceBuffers.get(providerCallId);
+    if (!buf) {
+      return;
+    }
+
+    const pending = buf.chunks.join(" ").trim();
+    const { callId } = buf;
+    buf.chunks = [];
+    if (buf.timer) {
+      clearTimeout(buf.timer);
+      buf.timer = null;
+    }
+
+    if (!pending) {
+      return;
+    }
+
+    console.log(`[voice-call] Debounced utterance for ${providerCallId}: "${pending}"`);
+    this.handleInboundResponse(callId, pending).catch((err) => {
+      console.warn(`[voice-call] Failed to auto-respond (debounced):`, err);
+    });
+  }
+
+  /**
+   * Clean up debounce buffers for a disconnected call (by internal callId).
    */
   private cleanupDebounce(callId: string): void {
-    // callId here is the provider call ID used as key; iterate to find matches
     for (const [key, buf] of this.debounceBuffers) {
-      if (buf.timer) {
-        clearTimeout(buf.timer);
+      if (buf.callId === callId) {
+        if (buf.timer) {
+          clearTimeout(buf.timer);
+        }
+        this.debounceBuffers.delete(key);
       }
-      this.debounceBuffers.delete(key);
     }
   }
 
@@ -495,7 +520,11 @@ export class VoiceCallWebhookServer {
     // Notify hook: processing started (e.g., play presence sounds)
     const audioCtx = this.buildStreamAudioContextForCall(callId);
     if (audioCtx) {
-      this.hooks.onProcessingStart?.(audioCtx);
+      try {
+        this.hooks.onProcessingStart?.(audioCtx);
+      } catch (err) {
+        console.warn(`[voice-call] onProcessingStart hook error:`, err);
+      }
     }
 
     try {
@@ -512,7 +541,11 @@ export class VoiceCallWebhookServer {
 
       // Notify hook: processing ended
       if (audioCtx) {
-        this.hooks.onProcessingEnd?.(audioCtx);
+        try {
+          this.hooks.onProcessingEnd?.(audioCtx);
+        } catch (e) {
+          console.warn("[voice-call] onProcessingEnd hook error:", e);
+        }
       }
 
       if (result.error) {
@@ -523,7 +556,7 @@ export class VoiceCallWebhookServer {
       if (result.text) {
         // Apply TTS text transform hook (e.g., markdown → v3 audio tags)
         const finalText = this.hooks.transformTtsText
-          ? this.hooks.transformTtsText(result.text)
+          ? (this.hooks.transformTtsText(result.text) ?? result.text)
           : result.text;
         console.log(`[voice-call] AI response: "${finalText}"`);
         await this.manager.speak(callId, finalText);
@@ -531,7 +564,11 @@ export class VoiceCallWebhookServer {
     } catch (err) {
       // Notify hook: processing ended (even on error)
       if (audioCtx) {
-        this.hooks.onProcessingEnd?.(audioCtx);
+        try {
+          this.hooks.onProcessingEnd?.(audioCtx);
+        } catch (e) {
+          console.warn("[voice-call] onProcessingEnd hook error:", e);
+        }
       }
       console.error(`[voice-call] Auto-response error:`, err);
     }
