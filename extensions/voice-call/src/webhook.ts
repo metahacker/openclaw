@@ -428,13 +428,14 @@ export class VoiceCallWebhookServer {
       return;
     }
 
-    const pending = buf.chunks.join(" ").trim();
+    const pending = buf.chunks.join(" ").replace(/\s+/g, " ").trim();
     const { callId } = buf;
-    buf.chunks = [];
+
+    // Clean up: clear timer and remove entry from map
     if (buf.timer) {
       clearTimeout(buf.timer);
-      buf.timer = null;
     }
+    this.debounceBuffers.delete(providerCallId);
 
     if (!pending) {
       return;
@@ -539,15 +540,6 @@ export class VoiceCallWebhookServer {
         userMessage,
       });
 
-      // Notify hook: processing ended
-      if (audioCtx) {
-        try {
-          this.hooks.onProcessingEnd?.(audioCtx);
-        } catch (e) {
-          console.warn("[voice-call] onProcessingEnd hook error:", e);
-        }
-      }
-
       if (result.error) {
         console.error(`[voice-call] Response generation error: ${result.error}`);
         return;
@@ -562,7 +554,9 @@ export class VoiceCallWebhookServer {
         await this.manager.speak(callId, finalText);
       }
     } catch (err) {
-      // Notify hook: processing ended (even on error)
+      console.error(`[voice-call] Auto-response error:`, err);
+    } finally {
+      // Notify hook exactly once: processing ended (success or error)
       if (audioCtx) {
         try {
           this.hooks.onProcessingEnd?.(audioCtx);
@@ -570,7 +564,6 @@ export class VoiceCallWebhookServer {
           console.warn("[voice-call] onProcessingEnd hook error:", e);
         }
       }
-      console.error(`[voice-call] Auto-response error:`, err);
     }
   }
 }
