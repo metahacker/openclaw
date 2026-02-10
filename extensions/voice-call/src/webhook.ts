@@ -184,7 +184,11 @@ export class VoiceCallWebhookServer {
         // Clean up debounce state
         this.cleanupDebounce(callId);
         // Notify hook
-        this.hooks.onCallEnd?.(callId);
+        try {
+          this.hooks.onCallEnd?.(callId);
+        } catch (err) {
+          console.warn(`[voice-call] onCallEnd hook error:`, err);
+        }
       },
     };
 
@@ -540,6 +544,17 @@ export class VoiceCallWebhookServer {
         userMessage,
       });
 
+      // Notify hook: processing ended (response ready, before TTS playback).
+      // This fires after agent thinking completes but BEFORE speak(), so hooks
+      // can stop presence/filler sounds before the response plays.
+      if (audioCtx) {
+        try {
+          this.hooks.onProcessingEnd?.(audioCtx);
+        } catch (e) {
+          console.warn("[voice-call] onProcessingEnd hook error:", e);
+        }
+      }
+
       if (result.error) {
         console.error(`[voice-call] Response generation error: ${result.error}`);
         return;
@@ -555,8 +570,7 @@ export class VoiceCallWebhookServer {
       }
     } catch (err) {
       console.error(`[voice-call] Auto-response error:`, err);
-    } finally {
-      // Notify hook exactly once: processing ended (success or error)
+      // Ensure processing end fires even on error
       if (audioCtx) {
         try {
           this.hooks.onProcessingEnd?.(audioCtx);
