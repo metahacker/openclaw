@@ -1,5 +1,6 @@
 import type { VoiceCallConfig } from "./config.js";
 import type { CoreConfig } from "./core-bridge.js";
+import type { VoiceCallHooks } from "./hooks.js";
 import type { VoiceCallProvider } from "./providers/base.js";
 import type { TelephonyTtsRuntime } from "./telephony-tts.js";
 import { resolveVoiceCallConfig, validateProviderConfig } from "./config.js";
@@ -98,8 +99,10 @@ export async function createVoiceCallRuntime(params: {
   coreConfig: CoreConfig;
   ttsRuntime?: TelephonyTtsRuntime;
   logger?: Logger;
+  /** Optional hooks for extending call behavior (greetings, presence sounds, TTS transforms) */
+  hooks?: VoiceCallHooks;
 }): Promise<VoiceCallRuntime> {
-  const { config: rawConfig, coreConfig, ttsRuntime, logger } = params;
+  const { config: rawConfig, coreConfig, ttsRuntime, logger, hooks } = params;
   const log = logger ?? {
     info: console.log,
     warn: console.warn,
@@ -120,7 +123,7 @@ export async function createVoiceCallRuntime(params: {
 
   const provider = resolveProvider(config);
   const manager = new CallManager(config);
-  const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig);
+  const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig, hooks);
 
   const localUrl = await webhookServer.start();
 

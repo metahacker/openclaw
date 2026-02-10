@@ -312,6 +312,13 @@ export class MediaStreamHandler {
   }
 
   /**
+   * Get the stream SID for a call ID (if connected).
+   */
+  getStreamSidByCallId(callId: string): string | undefined {
+    return this.getSessionByCallId(callId)?.streamSid;
+  }
+
+  /**
    * Close all sessions.
    */
   closeAll(): void {

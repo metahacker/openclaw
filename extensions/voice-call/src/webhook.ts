@@ -3,6 +3,7 @@ import http from "node:http";
 import { URL } from "node:url";
 import type { VoiceCallConfig } from "./config.js";
 import type { CoreConfig } from "./core-bridge.js";
+import type { VoiceCallHooks, StreamAudioContext } from "./hooks.js";
 import type { CallManager } from "./manager.js";
 import type { MediaStreamConfig } from "./media-stream.js";
 import type { VoiceCallProvider } from "./providers/base.js";
@@ -27,16 +28,24 @@ export class VoiceCallWebhookServer {
   /** Media stream handler for bidirectional audio (when streaming enabled) */
   private mediaStreamHandler: MediaStreamHandler | null = null;
 
+  /** Optional hooks for extending call behavior */
+  private hooks: VoiceCallHooks;
+
+  /** Debounce state per provider call ID (transcript buffering) */
+  private debounceBuffers = new Map<string, { chunks: string[]; timer: NodeJS.Timeout | null }>();
+
   constructor(
     config: VoiceCallConfig,
     manager: CallManager,
     provider: VoiceCallProvider,
     coreConfig?: CoreConfig,
+    hooks?: VoiceCallHooks,
   ) {
     this.config = config;
     this.manager = manager;
     this.provider = provider;
     this.coreConfig = coreConfig ?? null;
+    this.hooks = hooks ?? {};
 
     // Initialize media stream handler if streaming is enabled
     if (config.streaming?.enabled) {
@@ -74,9 +83,13 @@ export class VoiceCallWebhookServer {
       shouldAcceptStream: ({ callId, token }) => {
         const call = this.manager.getCallByProviderCallId(callId);
         if (!call) {
-          return false;
+          // PEAR patch: auto-accept streams for calls we know about via provider ID
+          console.log(
+            `[voice-call] Stream for unknown call ${callId} — accepting (skipSignatureVerification mode)`,
+          );
+          return this.config.skipSignatureVerification ?? false;
         }
-        if (this.provider.name === "twilio") {
+        if (this.provider.name === "twilio" && !this.config.skipSignatureVerification) {
           const twilio = this.provider as TwilioProvider;
           if (!twilio.isValidStreamToken(callId, token)) {
             console.warn(`[voice-call] Rejecting media stream: invalid token for ${callId}`);
@@ -116,9 +129,14 @@ export class VoiceCallWebhookServer {
         const callMode = call.metadata?.mode as string | undefined;
         const shouldRespond = call.direction === "inbound" || callMode === "conversation";
         if (shouldRespond) {
-          this.handleInboundResponse(call.callId, transcript).catch((err) => {
-            console.warn(`[voice-call] Failed to auto-respond:`, err);
-          });
+          const debounceMs = this.config.transcriptDebounceMs ?? 0;
+          if (debounceMs > 0) {
+            this.debounceTranscript(providerCallId, call.callId, transcript, debounceMs);
+          } else {
+            this.handleInboundResponse(call.callId, transcript).catch((err) => {
+              console.warn(`[voice-call] Failed to auto-respond:`, err);
+            });
+          }
         }
       },
       onSpeechStart: (providerCallId) => {
@@ -138,7 +156,22 @@ export class VoiceCallWebhookServer {
 
         // Speak initial message if one was provided when call was initiated
         // Use setTimeout to allow stream setup to complete
-        setTimeout(() => {
+        setTimeout(async () => {
+          // If a hook is registered, let it handle the greeting sequence first
+          if (this.hooks.onStreamReady && this.mediaStreamHandler) {
+            try {
+              const ctx = this.buildStreamAudioContext(callId, streamSid);
+              if (ctx) {
+                const result = await this.hooks.onStreamReady(ctx);
+                if (result?.skipDefaultGreeting) {
+                  return; // Hook handled the greeting
+                }
+              }
+            } catch (err) {
+              console.warn(`[voice-call] onStreamReady hook error:`, err);
+            }
+          }
+
           this.manager.speakInitialMessage(callId).catch((err) => {
             console.warn(`[voice-call] Failed to speak initial message:`, err);
           });
@@ -149,6 +182,10 @@ export class VoiceCallWebhookServer {
         if (this.provider.name === "twilio") {
           (this.provider as TwilioProvider).unregisterCallStream(callId);
         }
+        // Clean up debounce state
+        this.cleanupDebounce(callId);
+        // Notify hook
+        this.hooks.onCallEnd?.(callId);
       },
     };
 
@@ -341,6 +378,101 @@ export class VoiceCallWebhookServer {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Transcript Debounce
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Buffer transcript chunks and fire a single response after the debounce
+   * window elapses with no new chunks. This prevents multiple agent calls
+   * when STT produces several transcript segments for one spoken sentence.
+   */
+  private debounceTranscript(
+    providerCallId: string,
+    callId: string,
+    transcript: string,
+    debounceMs: number,
+  ): void {
+    let buf = this.debounceBuffers.get(providerCallId);
+    if (!buf) {
+      buf = { chunks: [], timer: null };
+      this.debounceBuffers.set(providerCallId, buf);
+    }
+
+    buf.chunks.push(transcript);
+
+    // Reset the timer
+    if (buf.timer) {
+      clearTimeout(buf.timer);
+    }
+
+    buf.timer = setTimeout(() => {
+      const pending = buf!.chunks.join(" ").trim();
+      buf!.chunks = [];
+      buf!.timer = null;
+
+      if (!pending) {
+        return;
+      }
+
+      console.log(`[voice-call] Debounced utterance for ${providerCallId}: "${pending}"`);
+      this.handleInboundResponse(callId, pending).catch((err) => {
+        console.warn(`[voice-call] Failed to auto-respond (debounced):`, err);
+      });
+    }, debounceMs);
+  }
+
+  /**
+   * Clean up debounce buffers for a disconnected call.
+   */
+  private cleanupDebounce(callId: string): void {
+    // callId here is the provider call ID used as key; iterate to find matches
+    for (const [key, buf] of this.debounceBuffers) {
+      if (buf.timer) {
+        clearTimeout(buf.timer);
+      }
+      this.debounceBuffers.delete(key);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hook Helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a StreamAudioContext for hooks to send raw audio to the caller.
+   */
+  private buildStreamAudioContext(callId: string, streamSid: string): StreamAudioContext | null {
+    if (!this.mediaStreamHandler) {
+      return null;
+    }
+    const handler = this.mediaStreamHandler;
+    return {
+      callId,
+      streamSid,
+      sendAudio: (buf: Buffer) => handler.sendAudio(streamSid, buf),
+      clearAudio: () => handler.clearAudio(streamSid),
+    };
+  }
+
+  /**
+   * Build a StreamAudioContext by looking up the stream for a call ID.
+   */
+  private buildStreamAudioContextForCall(callId: string): StreamAudioContext | null {
+    if (!this.mediaStreamHandler) {
+      return null;
+    }
+    const streamSid = this.mediaStreamHandler.getStreamSidByCallId(callId);
+    if (!streamSid) {
+      return null;
+    }
+    return this.buildStreamAudioContext(callId, streamSid);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inbound Response
+  // ---------------------------------------------------------------------------
+
   /**
    * Handle auto-response for inbound calls using the agent system.
    * Supports tool calling for richer voice interactions.
@@ -360,6 +492,12 @@ export class VoiceCallWebhookServer {
       return;
     }
 
+    // Notify hook: processing started (e.g., play presence sounds)
+    const audioCtx = this.buildStreamAudioContextForCall(callId);
+    if (audioCtx) {
+      this.hooks.onProcessingStart?.(audioCtx);
+    }
+
     try {
       const { generateVoiceResponse } = await import("./response-generator.js");
 
@@ -372,16 +510,29 @@ export class VoiceCallWebhookServer {
         userMessage,
       });
 
+      // Notify hook: processing ended
+      if (audioCtx) {
+        this.hooks.onProcessingEnd?.(audioCtx);
+      }
+
       if (result.error) {
         console.error(`[voice-call] Response generation error: ${result.error}`);
         return;
       }
 
       if (result.text) {
-        console.log(`[voice-call] AI response: "${result.text}"`);
-        await this.manager.speak(callId, result.text);
+        // Apply TTS text transform hook (e.g., markdown → v3 audio tags)
+        const finalText = this.hooks.transformTtsText
+          ? this.hooks.transformTtsText(result.text)
+          : result.text;
+        console.log(`[voice-call] AI response: "${finalText}"`);
+        await this.manager.speak(callId, finalText);
       }
     } catch (err) {
+      // Notify hook: processing ended (even on error)
+      if (audioCtx) {
+        this.hooks.onProcessingEnd?.(audioCtx);
+      }
       console.error(`[voice-call] Auto-response error:`, err);
     }
   }

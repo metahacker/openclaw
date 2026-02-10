@@ -389,6 +389,16 @@ export const VoiceCallConfigSchema = z
 
     /** Timeout for response generation in ms (default 30s) */
     responseTimeoutMs: z.number().int().positive().default(30000),
+
+    /**
+     * Transcript debounce window in ms.
+     * When > 0, multiple STT transcript chunks arriving within this window
+     * are concatenated into a single utterance before triggering a response.
+     * This prevents multiple Claude calls for a single spoken sentence.
+     * Default: 0 (disabled — each transcript fires immediately, preserving
+     * existing behavior).
+     */
+    transcriptDebounceMs: z.number().int().nonnegative().default(0),
   })
   .strict();
 
