@@ -558,7 +558,41 @@ export class VoiceCallWebhookServer {
       let result: { text: string | null; error?: string };
 
       if (warmAgent) {
-        result = await warmAgent.respond(userMessage, call.transcript);
+        // Stream sentence-by-sentence: fire TTS per sentence while LLM generates
+        let firstSentenceSent = false;
+        result = await warmAgent.respondStreaming(
+          userMessage,
+          call.transcript,
+          async (sentence) => {
+            // Stop presence sounds on first sentence
+            if (!firstSentenceSent) {
+              firstSentenceSent = true;
+              if (audioCtx) {
+                try {
+                  this.hooks.onProcessingEnd?.(audioCtx);
+                } catch (e) {
+                  console.warn("[voice-call] onProcessingEnd hook error:", e);
+                }
+              }
+            }
+
+            // Apply TTS text transform hook
+            const finalText = this.hooks.transformTtsText
+              ? ((await this.hooks.transformTtsText(sentence)) ?? sentence)
+              : sentence;
+            console.log(`[voice-call] Streaming sentence: "${finalText}"`);
+            await this.manager.speak(callId, finalText);
+          },
+        );
+
+        // If no sentences were streamed, fire processing end
+        if (!firstSentenceSent && audioCtx) {
+          try {
+            this.hooks.onProcessingEnd?.(audioCtx);
+          } catch (e) {
+            console.warn("[voice-call] onProcessingEnd hook error:", e);
+          }
+        }
       } else {
         console.warn(`[voice-call] No warm agent for ${callId}, cold-starting`);
         const { generateVoiceResponse } = await import("./response-generator.js");
@@ -570,31 +604,28 @@ export class VoiceCallWebhookServer {
           transcript: call.transcript,
           userMessage,
         });
-      }
 
-      // Notify hook: processing ended (response ready, before TTS playback).
-      // This fires after agent thinking completes but BEFORE speak(), so hooks
-      // can stop presence/filler sounds before the response plays.
-      if (audioCtx) {
-        try {
-          this.hooks.onProcessingEnd?.(audioCtx);
-        } catch (e) {
-          console.warn("[voice-call] onProcessingEnd hook error:", e);
+        // Notify hook: processing ended
+        if (audioCtx) {
+          try {
+            this.hooks.onProcessingEnd?.(audioCtx);
+          } catch (e) {
+            console.warn("[voice-call] onProcessingEnd hook error:", e);
+          }
+        }
+
+        if (result.text) {
+          const finalText = this.hooks.transformTtsText
+            ? ((await this.hooks.transformTtsText(result.text)) ?? result.text)
+            : result.text;
+          console.log(`[voice-call] AI response: "${finalText}"`);
+          await this.manager.speak(callId, finalText);
         }
       }
 
       if (result.error) {
         console.error(`[voice-call] Response generation error: ${result.error}`);
         return;
-      }
-
-      if (result.text) {
-        // Apply TTS text transform hook (e.g., markdown → v3 audio tags)
-        const finalText = this.hooks.transformTtsText
-          ? ((await this.hooks.transformTtsText(result.text)) ?? result.text)
-          : result.text;
-        console.log(`[voice-call] AI response: "${finalText}"`);
-        await this.manager.speak(callId, finalText);
       }
     } catch (err) {
       console.error(`[voice-call] Auto-response error:`, err);

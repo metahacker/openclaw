@@ -210,6 +210,91 @@ export class WarmAgentContext {
   }
 
   /**
+   * Stream response sentence-by-sentence. Calls onSentence() as soon as a
+   * complete sentence is available, while the LLM is still generating.
+   * Returns the full concatenated text when done.
+   */
+  async respondStreaming(
+    userMessage: string,
+    transcript: Array<{ speaker: "user" | "bot"; text: string }>,
+    onSentence: (sentence: string) => void | Promise<void>,
+  ): Promise<WarmResponseResult> {
+    // Wait for boot if still running
+    if (this.bootPromise && !this.booted) {
+      await this.bootPromise;
+    }
+
+    if (this.bootError || !this.deps) {
+      return { text: null, error: this.bootError || "Agent not booted" };
+    }
+
+    // Build system prompt with current transcript
+    let extraSystemPrompt = this.basePrompt;
+    if (transcript.length > 0) {
+      const history = transcript
+        .map((e) => `${e.speaker === "bot" ? "You" : "Caller"}: ${e.text}`)
+        .join("\n");
+      extraSystemPrompt = `${this.basePrompt}\n\nConversation so far:\n${history}`;
+    }
+
+    const runId = `voice:${this.callId}:${Date.now()}`;
+
+    const allChunks: string[] = [];
+
+    try {
+      const result = await this.deps.runEmbeddedPiAgent({
+        sessionId: this.sessionId!,
+        sessionKey: this.sessionKey!,
+        messageProvider: "voice",
+        sessionFile: this.sessionFile!,
+        workspaceDir: this.workspaceDir!,
+        config: this.coreConfig,
+        prompt: userMessage,
+        provider: this.provider!,
+        model: this.model!,
+        thinkLevel: this.thinkLevel!,
+        verboseLevel: "off",
+        timeoutMs: this.timeoutMs,
+        runId,
+        lane: "voice",
+        extraSystemPrompt,
+        agentDir: this.agentDir!,
+        onBlockReply: async (payload) => {
+          if (!payload.text) return;
+          const trimmed = payload.text.trim();
+          if (!trimmed) return;
+          allChunks.push(trimmed);
+          console.log(
+            `[voice-call] Streaming chunk (${trimmed.length} chars): "${trimmed.slice(0, 60)}..."`,
+          );
+          await onSentence(trimmed);
+        },
+        blockReplyBreak: "text_end",
+        blockReplyChunking: {
+          minChars: 20,
+          maxChars: 200,
+          breakPreference: "sentence",
+          flushOnParagraph: true,
+        },
+      });
+
+      // If no streaming chunks were captured, fall back to payloads
+      if (allChunks.length === 0) {
+        const texts = (result.payloads ?? [])
+          .filter((p) => p.text && !p.isError)
+          .map((p) => p.text?.trim())
+          .filter(Boolean);
+        return { text: texts.join(" ") || null };
+      }
+
+      return { text: allChunks.join(" ") };
+    } catch (err) {
+      console.error(`[voice-call] Warm agent streaming respond failed:`, err);
+      return { text: allChunks.length > 0 ? allChunks.join(" ") : null, error: String(err) };
+    }
+  }
+
+  /**
    * Get the caller's phone number (for greeting personalization).
    */
   getFrom(): string {
