@@ -9,9 +9,9 @@ import type { MediaStreamConfig } from "./media-stream.js";
 import type { VoiceCallProvider } from "./providers/base.js";
 import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
+import { bootCallAgent, getCallAgent, teardownCallAgent } from "./call-agent.js";
 import { MediaStreamHandler } from "./media-stream.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
-import { bootWarmAgent, getWarmAgent, teardownWarmAgent } from "./warm-agent.js";
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -154,10 +154,10 @@ export class VoiceCallWebhookServer {
           (this.provider as TwilioProvider).registerCallStream(callId, streamSid);
         }
 
-        // Boot warm agent immediately — runs in parallel with chimes
+        // Boot call agent immediately — runs in parallel with chimes
         const call = this.manager.getCallByProviderCallId(callId);
         if (call && this.coreConfig) {
-          bootWarmAgent(this.config, this.coreConfig, call.callId, call.from);
+          bootCallAgent(this.config, this.coreConfig, call.callId, call.from);
         }
 
         // Speak initial message if one was provided when call was initiated
@@ -190,11 +190,11 @@ export class VoiceCallWebhookServer {
         }
         // Clean up debounce state
         this.cleanupDebounce(callId);
-        // Tear down warm agent
+        // Tear down call agent
         // callId here is providerCallId — look up internal callId
         const dcCall = this.manager.getCallByProviderCallId(callId);
         if (dcCall) {
-          teardownWarmAgent(dcCall.callId);
+          teardownCallAgent(dcCall.callId);
         }
         // Notify hook
         try {
@@ -553,37 +553,33 @@ export class VoiceCallWebhookServer {
     }
 
     try {
-      // Use warm agent if available (booted on stream_ready), fall back to cold start
-      const warmAgent = getWarmAgent(callId);
+      // Use call agent if available (booted on stream_ready), fall back to cold start
+      const callAgent = getCallAgent(callId);
       let result: { text: string | null; error?: string };
 
-      if (warmAgent) {
-        // Stream sentence-by-sentence: fire TTS per sentence while LLM generates
+      if (callAgent) {
+        // Persistent agent: stream sentence-by-sentence via onChunk
         let firstSentenceSent = false;
-        result = await warmAgent.respondStreaming(
-          userMessage,
-          call.transcript,
-          async (sentence) => {
-            // Stop presence sounds on first sentence
-            if (!firstSentenceSent) {
-              firstSentenceSent = true;
-              if (audioCtx) {
-                try {
-                  this.hooks.onProcessingEnd?.(audioCtx);
-                } catch (e) {
-                  console.warn("[voice-call] onProcessingEnd hook error:", e);
-                }
+        result = await callAgent.prompt(userMessage, async (sentence) => {
+          // Stop presence sounds on first sentence
+          if (!firstSentenceSent) {
+            firstSentenceSent = true;
+            if (audioCtx) {
+              try {
+                this.hooks.onProcessingEnd?.(audioCtx);
+              } catch (e) {
+                console.warn("[voice-call] onProcessingEnd hook error:", e);
               }
             }
+          }
 
-            // Apply TTS text transform hook
-            const finalText = this.hooks.transformTtsText
-              ? ((await this.hooks.transformTtsText(sentence)) ?? sentence)
-              : sentence;
-            console.log(`[voice-call] Streaming sentence: "${finalText}"`);
-            await this.manager.speak(callId, finalText);
-          },
-        );
+          // Apply TTS text transform hook
+          const finalText = this.hooks.transformTtsText
+            ? ((await this.hooks.transformTtsText(sentence)) ?? sentence)
+            : sentence;
+          console.log(`[voice-call] Streaming sentence: "${finalText}"`);
+          await this.manager.speak(callId, finalText);
+        });
 
         // If no sentences were streamed, fire processing end
         if (!firstSentenceSent && audioCtx) {
@@ -594,7 +590,7 @@ export class VoiceCallWebhookServer {
           }
         }
       } else {
-        console.warn(`[voice-call] No warm agent for ${callId}, cold-starting`);
+        console.warn(`[voice-call] No call agent for ${callId}, cold-starting`);
         const { generateVoiceResponse } = await import("./response-generator.js");
         result = await generateVoiceResponse({
           voiceConfig: this.config,

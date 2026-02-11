@@ -12,3 +12,16 @@ export {
   saveSessionStore,
   resolveSessionFilePath,
 } from "./config/sessions.ts";
+
+// Agent session primitives (for persistent per-call agents)
+export { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+export { subscribeEmbeddedPiSession } from "./agents/pi-embedded-subscribe.ts";
+export { acquireSessionWriteLock } from "./agents/session-write-lock.ts";
+export { extractAssistantText } from "./agents/pi-embedded-utils.ts";
+export { resolveModel } from "./agents/pi-embedded-runner/model.ts";
+export { mapThinkingLevel } from "./auto-reply/thinking.ts";
+export { limitHistoryTurns } from "./agents/pi-embedded-runner/history.ts";
+export {
+  applySystemPromptOverrideToSession,
+  createSystemPromptOverride,
+} from "./agents/system-prompt.ts";
