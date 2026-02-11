@@ -11,6 +11,7 @@ import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
 import { MediaStreamHandler } from "./media-stream.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
+import { bootWarmAgent, getWarmAgent, teardownWarmAgent } from "./warm-agent.js";
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -153,6 +154,12 @@ export class VoiceCallWebhookServer {
           (this.provider as TwilioProvider).registerCallStream(callId, streamSid);
         }
 
+        // Boot warm agent immediately — runs in parallel with chimes
+        const call = this.manager.getCallByProviderCallId(callId);
+        if (call && this.coreConfig) {
+          bootWarmAgent(this.config, this.coreConfig, call.callId, call.from);
+        }
+
         // Speak initial message if one was provided when call was initiated
         // Use setTimeout to allow stream setup to complete
         setTimeout(async () => {
@@ -183,6 +190,12 @@ export class VoiceCallWebhookServer {
         }
         // Clean up debounce state
         this.cleanupDebounce(callId);
+        // Tear down warm agent
+        // callId here is providerCallId — look up internal callId
+        const dcCall = this.manager.getCallByProviderCallId(callId);
+        if (dcCall) {
+          teardownWarmAgent(dcCall.callId);
+        }
         // Notify hook
         try {
           this.hooks.onCallEnd?.(callId);
@@ -492,7 +505,14 @@ export class VoiceCallWebhookServer {
     if (!this.mediaStreamHandler) {
       return null;
     }
-    const streamSid = this.mediaStreamHandler.getStreamSidByCallId(callId);
+    // Try internal callId first, then look up providerCallId from call record
+    let streamSid = this.mediaStreamHandler.getStreamSidByCallId(callId);
+    if (!streamSid) {
+      const call = this.manager.getCall(callId);
+      if (call?.providerCallId) {
+        streamSid = this.mediaStreamHandler.getStreamSidByCallId(call.providerCallId);
+      }
+    }
     if (!streamSid) {
       return null;
     }
@@ -533,16 +553,24 @@ export class VoiceCallWebhookServer {
     }
 
     try {
-      const { generateVoiceResponse } = await import("./response-generator.js");
+      // Use warm agent if available (booted on stream_ready), fall back to cold start
+      const warmAgent = getWarmAgent(callId);
+      let result: { text: string | null; error?: string };
 
-      const result = await generateVoiceResponse({
-        voiceConfig: this.config,
-        coreConfig: this.coreConfig,
-        callId,
-        from: call.from,
-        transcript: call.transcript,
-        userMessage,
-      });
+      if (warmAgent) {
+        result = await warmAgent.respond(userMessage, call.transcript);
+      } else {
+        console.warn(`[voice-call] No warm agent for ${callId}, cold-starting`);
+        const { generateVoiceResponse } = await import("./response-generator.js");
+        result = await generateVoiceResponse({
+          voiceConfig: this.config,
+          coreConfig: this.coreConfig,
+          callId,
+          from: call.from,
+          transcript: call.transcript,
+          userMessage,
+        });
+      }
 
       // Notify hook: processing ended (response ready, before TTS playback).
       // This fires after agent thinking completes but BEFORE speak(), so hooks
@@ -563,7 +591,7 @@ export class VoiceCallWebhookServer {
       if (result.text) {
         // Apply TTS text transform hook (e.g., markdown → v3 audio tags)
         const finalText = this.hooks.transformTtsText
-          ? (this.hooks.transformTtsText(result.text) ?? result.text)
+          ? ((await this.hooks.transformTtsText(result.text)) ?? result.text)
           : result.text;
         console.log(`[voice-call] AI response: "${finalText}"`);
         await this.manager.speak(callId, finalText);
