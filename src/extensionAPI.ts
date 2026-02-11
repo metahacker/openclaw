@@ -19,9 +19,9 @@ export { subscribeEmbeddedPiSession } from "./agents/pi-embedded-subscribe.ts";
 export { acquireSessionWriteLock } from "./agents/session-write-lock.ts";
 export { extractAssistantText } from "./agents/pi-embedded-utils.ts";
 export { resolveModel } from "./agents/pi-embedded-runner/model.ts";
-export { mapThinkingLevel } from "./auto-reply/thinking.ts";
+export { mapThinkingLevel } from "./agents/pi-embedded-runner/utils.ts";
 export { limitHistoryTurns } from "./agents/pi-embedded-runner/history.ts";
 export {
   applySystemPromptOverrideToSession,
   createSystemPromptOverride,
-} from "./agents/system-prompt.ts";
+} from "./agents/pi-embedded-runner/system-prompt.ts";

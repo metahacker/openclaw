@@ -165,7 +165,10 @@ export class CallAgent {
         `You are ${agentName}, a helpful voice assistant on a phone call. Keep responses brief and conversational (1-2 sentences max). Be natural and friendly. The caller's phone number is ${this.from}. You have access to tools - use them when helpful.`;
 
       // 6. Acquire session lock
-      this.sessionLock = await core.acquireSessionWriteLock({ sessionFile });
+      this.sessionLock = await core.acquireSessionWriteLock({
+        sessionFile,
+        staleMs: 2 * 60 * 60 * 1000, // 2 hours — voice calls can be long
+      });
 
       // 7. Open session manager
       this.sessionManager = core.SessionManager.open(sessionFile);

@@ -280,6 +280,16 @@ export type OpenClawPluginApi = {
     handler: PluginHookHandlerMap[K],
     opts?: { priority?: number },
   ) => void;
+  /**
+   * Emit a hook, running all registered handlers.
+   * For void hooks, handlers run in parallel. For modifying hooks, handlers
+   * run sequentially and results are merged.
+   */
+  emit: <K extends PluginHookName>(
+    hookName: K,
+    event: Parameters<PluginHookHandlerMap[K]>[0],
+    ctx: Parameters<PluginHookHandlerMap[K]>[1],
+  ) => Promise<unknown>;
 };
 
 export type PluginOrigin = "bundled" | "global" | "workspace" | "config";
@@ -300,6 +310,11 @@ export type PluginHookName =
   | "agent_end"
   | "before_compaction"
   | "after_compaction"
+  | "voice_call:stream_ready"
+  | "voice_call:processing_start"
+  | "voice_call:processing_end"
+  | "voice_call:transform_tts"
+  | "voice_call:call_end"
   | "message_received"
   | "message_sending"
   | "message_sent"
@@ -471,6 +486,44 @@ export type PluginHookGatewayStopEvent = {
   reason?: string;
 };
 
+// ---------------------------------------------------------------------------
+// Voice Call hook types
+// ---------------------------------------------------------------------------
+
+/** Audio context passed to voice call hooks that can send/clear audio */
+export type PluginHookVoiceCallStreamContext = {
+  callId: string;
+  streamSid: string;
+  sendAudio: (muLawAudio: Buffer) => void;
+  clearAudio: () => void;
+};
+
+export type PluginHookVoiceCallStreamReadyEvent = {
+  callId: string;
+  streamSid: string;
+};
+
+export type PluginHookVoiceCallStreamReadyResult = {
+  skipDefaultGreeting?: boolean;
+};
+
+export type PluginHookVoiceCallProcessingEvent = {
+  callId: string;
+  streamSid: string;
+};
+
+export type PluginHookVoiceCallTransformTtsEvent = {
+  text: string;
+};
+
+export type PluginHookVoiceCallTransformTtsResult = {
+  text?: string;
+};
+
+export type PluginHookVoiceCallEndEvent = {
+  callId: string;
+};
+
 // Hook handler types mapped by hook name
 export type PluginHookHandlerMap = {
   before_agent_start: (
@@ -525,6 +578,32 @@ export type PluginHookHandlerMap = {
   gateway_stop: (
     event: PluginHookGatewayStopEvent,
     ctx: PluginHookGatewayContext,
+  ) => Promise<void> | void;
+  "voice_call:stream_ready": (
+    event: PluginHookVoiceCallStreamReadyEvent,
+    ctx: PluginHookVoiceCallStreamContext,
+  ) =>
+    | Promise<PluginHookVoiceCallStreamReadyResult | void>
+    | PluginHookVoiceCallStreamReadyResult
+    | void;
+  "voice_call:processing_start": (
+    event: PluginHookVoiceCallProcessingEvent,
+    ctx: PluginHookVoiceCallStreamContext,
+  ) => Promise<void> | void;
+  "voice_call:processing_end": (
+    event: PluginHookVoiceCallProcessingEvent,
+    ctx: PluginHookVoiceCallStreamContext,
+  ) => Promise<void> | void;
+  "voice_call:transform_tts": (
+    event: PluginHookVoiceCallTransformTtsEvent,
+    ctx: Record<string, never>,
+  ) =>
+    | Promise<PluginHookVoiceCallTransformTtsResult | void>
+    | PluginHookVoiceCallTransformTtsResult
+    | void;
+  "voice_call:call_end": (
+    event: PluginHookVoiceCallEndEvent,
+    ctx: Record<string, never>,
   ) => Promise<void> | void;
 };
 

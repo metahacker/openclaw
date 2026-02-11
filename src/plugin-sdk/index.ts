@@ -63,6 +63,13 @@ export type {
   OpenClawPluginApi,
   OpenClawPluginService,
   OpenClawPluginServiceContext,
+  PluginHookVoiceCallStreamContext,
+  PluginHookVoiceCallStreamReadyEvent,
+  PluginHookVoiceCallStreamReadyResult,
+  PluginHookVoiceCallProcessingEvent,
+  PluginHookVoiceCallTransformTtsEvent,
+  PluginHookVoiceCallTransformTtsResult,
+  PluginHookVoiceCallEndEvent,
   ProviderAuthContext,
   ProviderAuthResult,
 } from "../plugins/types.js";

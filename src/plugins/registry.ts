@@ -495,6 +495,38 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       registerCommand: (command) => registerCommand(record, command),
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) => registerTypedHook(record, hookName, handler, opts),
+      emit: async (hookName, event, ctx) => {
+        const { getGlobalHookRunner } = await import("./hook-runner-global.js");
+        const runner = getGlobalHookRunner();
+        if (!runner) {
+          return undefined;
+        }
+        // Use the generic modifying hook runner which handles both void and result hooks
+        const hooks = (registry.typedHooks as TypedPluginHookRegistration[]).filter(
+          (h) => h.hookName === hookName,
+        );
+        if (hooks.length === 0) {
+          return undefined;
+        }
+        // Run handlers sequentially, collecting results
+        let result: unknown;
+        for (const hook of hooks.toSorted((a, b) => (b.priority ?? 0) - (a.priority ?? 0))) {
+          try {
+            const out = await (hook.handler as (e: unknown, c: unknown) => Promise<unknown>)(
+              event,
+              ctx,
+            );
+            if (out !== undefined && out !== null) {
+              result = result ? { ...(result as object), ...(out as object) } : out;
+            }
+          } catch (err) {
+            registryParams.logger.error(
+              `[hooks] ${String(hookName)} handler from ${hook.pluginId} failed: ${String(err)}`,
+            );
+          }
+        }
+        return result;
+      },
     };
   };
 

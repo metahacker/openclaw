@@ -12,32 +12,55 @@ import {
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
 
 /**
- * Attempt to load PEAR voice hooks from the workspace extensions directory.
- * Returns empty hooks if not found (graceful degradation).
+ * Build a VoiceCallHooks bridge that delegates to the core plugin hook system.
+ * This allows any plugin to register voice-call hooks via api.on('voice_call:*', ...),
+ * and the voice-call extension will call them through this bridge.
  */
-async function loadVoiceHooks(logger?: {
-  info: (msg: string) => void;
-  warn: (msg: string) => void;
-}): Promise<VoiceCallHooks | undefined> {
-  const log = logger ?? { info: console.log, warn: console.warn };
-  try {
-    const os = await import("node:os");
-    const path = await import("node:path");
-    const hooksPath = path.join(
-      os.default.homedir(),
-      ".openclaw/workspace/extensions/pear-voice-hooks/dist/index.js",
-    );
-    const mod = await import(hooksPath);
-    if (typeof mod.createPearVoiceHooks === "function") {
-      const assetsDir = path.join(os.default.homedir(), ".openclaw/workspace/assets/audio");
-      const hooks = mod.createPearVoiceHooks({ assetsDir });
-      log.info("[voice-call] PEAR voice hooks loaded");
-      return hooks;
-    }
-  } catch {
-    // No hooks available — that's fine, run vanilla
-  }
-  return undefined;
+function buildHookBridge(api: OpenClawPluginApi): VoiceCallHooks {
+  return {
+    onStreamReady: async (ctx) => {
+      const result = await api.emit(
+        "voice_call:stream_ready",
+        {
+          callId: ctx.callId,
+          streamSid: ctx.streamSid,
+        },
+        ctx,
+      );
+      return result as { skipDefaultGreeting?: boolean } | undefined;
+    },
+    onProcessingStart: (ctx) => {
+      void api.emit(
+        "voice_call:processing_start",
+        {
+          callId: ctx.callId,
+          streamSid: ctx.streamSid,
+        },
+        ctx,
+      );
+    },
+    onProcessingEnd: (ctx) => {
+      void api.emit(
+        "voice_call:processing_end",
+        {
+          callId: ctx.callId,
+          streamSid: ctx.streamSid,
+        },
+        ctx,
+      );
+    },
+    transformTtsText: async (text) => {
+      const result = await api.emit(
+        "voice_call:transform_tts",
+        { text },
+        {} as Record<string, never>,
+      );
+      return (result as { text?: string } | undefined)?.text;
+    },
+    onCallEnd: (callId) => {
+      void api.emit("voice_call:call_end", { callId }, {} as Record<string, never>);
+    },
+  };
 }
 
 const voiceCallConfigSchema = {
@@ -209,7 +232,7 @@ const voiceCallPlugin = {
           coreConfig: api.config as CoreConfig,
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
-          hooks: await loadVoiceHooks(api.logger),
+          hooks: buildHookBridge(api),
         });
       }
       runtime = await runtimePromise;

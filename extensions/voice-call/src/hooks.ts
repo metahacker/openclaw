@@ -63,7 +63,7 @@ export interface VoiceCallHooks {
    * Return the transformed text, or `undefined` to use the original
    * text unchanged.
    */
-  transformTtsText?: (text: string) => string | undefined;
+  transformTtsText?: (text: string) => string | undefined | Promise<string | undefined>;
 
   /**
    * Called when a call disconnects.

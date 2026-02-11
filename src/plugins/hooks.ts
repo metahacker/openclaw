@@ -33,6 +33,13 @@ import type {
   PluginHookToolResultPersistContext,
   PluginHookToolResultPersistEvent,
   PluginHookToolResultPersistResult,
+  PluginHookVoiceCallStreamContext,
+  PluginHookVoiceCallStreamReadyEvent,
+  PluginHookVoiceCallStreamReadyResult,
+  PluginHookVoiceCallProcessingEvent,
+  PluginHookVoiceCallTransformTtsEvent,
+  PluginHookVoiceCallTransformTtsResult,
+  PluginHookVoiceCallEndEvent,
 } from "./types.js";
 
 // Re-export types for consumers
@@ -61,6 +68,13 @@ export type {
   PluginHookGatewayContext,
   PluginHookGatewayStartEvent,
   PluginHookGatewayStopEvent,
+  PluginHookVoiceCallStreamContext,
+  PluginHookVoiceCallStreamReadyEvent,
+  PluginHookVoiceCallStreamReadyResult,
+  PluginHookVoiceCallProcessingEvent,
+  PluginHookVoiceCallTransformTtsEvent,
+  PluginHookVoiceCallTransformTtsResult,
+  PluginHookVoiceCallEndEvent,
 };
 
 export type HookRunnerLogger = {
@@ -424,6 +438,78 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
   }
 
   // =========================================================================
+  // Voice Call Hooks
+  // =========================================================================
+
+  /**
+   * Run voice_call:stream_ready hook.
+   * Called when a media stream connects and is ready for audio.
+   * Runs sequentially; returns { skipDefaultGreeting } if any handler sets it.
+   */
+  async function runVoiceCallStreamReady(
+    event: PluginHookVoiceCallStreamReadyEvent,
+    ctx: PluginHookVoiceCallStreamContext,
+  ): Promise<PluginHookVoiceCallStreamReadyResult | undefined> {
+    return runModifyingHook<"voice_call:stream_ready", PluginHookVoiceCallStreamReadyResult>(
+      "voice_call:stream_ready",
+      event,
+      ctx,
+      (acc, next) => ({
+        skipDefaultGreeting: next.skipDefaultGreeting ?? acc?.skipDefaultGreeting,
+      }),
+    );
+  }
+
+  /**
+   * Run voice_call:processing_start hook.
+   * Called when the agent starts processing (before LLM call).
+   * Runs in parallel (fire-and-forget).
+   */
+  async function runVoiceCallProcessingStart(
+    event: PluginHookVoiceCallProcessingEvent,
+    ctx: PluginHookVoiceCallStreamContext,
+  ): Promise<void> {
+    return runVoidHook("voice_call:processing_start", event, ctx);
+  }
+
+  /**
+   * Run voice_call:processing_end hook.
+   * Called when the agent finishes processing.
+   * Runs in parallel (fire-and-forget).
+   */
+  async function runVoiceCallProcessingEnd(
+    event: PluginHookVoiceCallProcessingEvent,
+    ctx: PluginHookVoiceCallStreamContext,
+  ): Promise<void> {
+    return runVoidHook("voice_call:processing_end", event, ctx);
+  }
+
+  /**
+   * Run voice_call:transform_tts hook.
+   * Transforms text before TTS. Runs sequentially; last non-undefined result wins.
+   */
+  async function runVoiceCallTransformTts(
+    event: PluginHookVoiceCallTransformTtsEvent,
+  ): Promise<PluginHookVoiceCallTransformTtsResult | undefined> {
+    return runModifyingHook<"voice_call:transform_tts", PluginHookVoiceCallTransformTtsResult>(
+      "voice_call:transform_tts",
+      event,
+      {} as Record<string, never>,
+      (acc, next) => ({
+        text: next.text ?? acc?.text,
+      }),
+    );
+  }
+
+  /**
+   * Run voice_call:call_end hook.
+   * Called when a call disconnects. Runs in parallel (fire-and-forget).
+   */
+  async function runVoiceCallEnd(event: PluginHookVoiceCallEndEvent): Promise<void> {
+    return runVoidHook("voice_call:call_end", event, {} as Record<string, never>);
+  }
+
+  // =========================================================================
   // Utility
   // =========================================================================
 
@@ -461,6 +547,12 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
     // Gateway hooks
     runGatewayStart,
     runGatewayStop,
+    // Voice call hooks
+    runVoiceCallStreamReady,
+    runVoiceCallProcessingStart,
+    runVoiceCallProcessingEnd,
+    runVoiceCallTransformTts,
+    runVoiceCallEnd,
     // Utility
     hasHooks,
     getHookCount,
