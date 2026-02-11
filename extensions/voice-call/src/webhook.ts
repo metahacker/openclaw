@@ -188,13 +188,14 @@ export class VoiceCallWebhookServer {
         if (this.provider.name === "twilio") {
           (this.provider as TwilioProvider).unregisterCallStream(callId);
         }
-        // Clean up debounce state
-        this.cleanupDebounce(callId);
-        // Tear down call agent
         // callId here is providerCallId — look up internal callId
         const dcCall = this.manager.getCallByProviderCallId(callId);
+        // Clean up debounce state (use internal callId, not providerCallId)
         if (dcCall) {
+          this.cleanupDebounce(dcCall.callId);
           teardownCallAgent(dcCall.callId);
+        } else {
+          this.cleanupDebounce(callId); // fallback
         }
         // Notify hook
         try {

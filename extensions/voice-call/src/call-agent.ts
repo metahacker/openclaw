@@ -8,6 +8,12 @@
  * Boot: call connects → stream_ready → CallAgent.boot() (parallel with chimes)
  * Utterance: transcript arrives → CallAgent.prompt(text, onChunk) → streaming TTS
  * End: call disconnects → CallAgent.dispose()
+ *
+ * Design notes:
+ * - Session write lock held for entire call duration. Safe because voice sessions
+ *   use isolated `voice:{phone}` keys separate from chat sessions.
+ * - prompt() is serialized via mutex to prevent concurrent session.prompt() calls.
+ * - Abrupt disconnects handled by TTL cleanup in the agent cache.
  */
 
 import crypto from "node:crypto";
@@ -23,10 +29,8 @@ let coreModules: any = null;
 async function loadCoreModules(): Promise<any> {
   if (coreModules) return coreModules;
 
-  // Find the OpenClaw root (same logic as core-bridge)
   let root = process.env.OPENCLAW_ROOT?.trim();
   if (!root) {
-    // Walk up from process.argv[1] to find openclaw package
     let dir = path.dirname(process.argv[1] || process.cwd());
     while (dir !== path.dirname(dir)) {
       const pkgPath = path.join(dir, "package.json");
@@ -76,6 +80,13 @@ export class CallAgent {
   private booted = false;
   private bootPromise: Promise<void> | null = null;
   private bootError: string | null = null;
+  private disposed = false;
+
+  // Mutex for serializing prompt() calls
+  private promptQueue: Promise<CallAgentResult> = Promise.resolve({ text: null });
+
+  // Track last activity for TTL cleanup
+  public lastActivityAt: number = Date.now();
 
   constructor(voiceConfig: VoiceCallConfig, coreConfig: CoreConfig, callId: string, from: string) {
     this.voiceConfig = voiceConfig;
@@ -101,7 +112,6 @@ export class CallAgent {
   private async _boot(): Promise<void> {
     const t0 = Date.now();
     try {
-      // Load both core-bridge deps (for path resolution) and full core modules
       const [deps, core] = await Promise.all([loadCoreAgentDeps(), loadCoreModules()]);
       this.deps = deps;
       this.core = core;
@@ -175,14 +185,13 @@ export class CallAgent {
         throw new Error("Failed to create agent session");
       }
 
-      // 9. Apply system prompt override
-      const systemPromptOverride = core.createSystemPromptOverride(basePrompt);
-      core.applySystemPromptOverrideToSession(session, systemPromptOverride());
+      // 9. Apply system prompt — pass string directly
+      core.applySystemPromptOverrideToSession(session, basePrompt);
 
-      // 10. Limit history
+      // 10. Limit history (keep voice context small for speed)
       const messages = session.messages || [];
       if (messages.length > 0) {
-        const limited = core.limitHistoryTurns(messages, 20);
+        const limited = core.limitHistoryTurns(messages, 8);
         if (limited.length > 0) {
           session.agent.replaceMessages(limited);
         }
@@ -190,6 +199,14 @@ export class CallAgent {
 
       this.session = session;
       this.booted = true;
+
+      // Check if disposed during boot (race condition fix)
+      if (this.disposed) {
+        console.log(`[voice-call] CallAgent disposed during boot, cleaning up`);
+        this._releaseResources();
+        return;
+      }
+
       console.log(
         `[voice-call] CallAgent booted for ${this.from} in ${Date.now() - t0}ms ` +
           `(model: ${provider}/${modelId}, session: ${sessionId})`,
@@ -197,14 +214,27 @@ export class CallAgent {
     } catch (err) {
       this.bootError = err instanceof Error ? err.message : String(err);
       console.error(`[voice-call] CallAgent boot failed:`, err);
+      // Release any resources acquired before the error
+      this._releaseResources();
     }
   }
 
   /**
    * Send a message and stream the response.
    * onChunk fires per sentence as the LLM generates.
+   * Serialized: only one prompt runs at a time.
    */
   async prompt(
+    userMessage: string,
+    onChunk?: (text: string) => void | Promise<void>,
+  ): Promise<CallAgentResult> {
+    // Serialize prompts — queue behind any in-flight prompt
+    const result = this.promptQueue.then(() => this._prompt(userMessage, onChunk));
+    this.promptQueue = result.catch(() => ({ text: null, error: "queued prompt failed" }));
+    return result;
+  }
+
+  private async _prompt(
     userMessage: string,
     onChunk?: (text: string) => void | Promise<void>,
   ): Promise<CallAgentResult> {
@@ -212,17 +242,25 @@ export class CallAgent {
       await this.bootPromise;
     }
 
+    if (this.disposed) {
+      return { text: null, error: "Agent disposed" };
+    }
+
     if (this.bootError || !this.session || !this.core) {
       return { text: null, error: this.bootError || "Agent not booted" };
     }
 
+    this.lastActivityAt = Date.now();
+
     const session = this.session;
     const core = this.core;
     const allChunks: string[] = [];
+    const inFlightChunks: Promise<void>[] = [];
+    let subscription: any = null;
 
     try {
       // Subscribe to streaming events BEFORE sending prompt
-      const subscription = core.subscribeEmbeddedPiSession({
+      subscription = core.subscribeEmbeddedPiSession({
         session,
         runId: `voice:${this.callId}:${Date.now()}`,
         verboseLevel: "off",
@@ -234,7 +272,11 @@ export class CallAgent {
           console.log(
             `[voice-call] CallAgent chunk (${trimmed.length} chars): "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "..." : ""}"`,
           );
-          if (onChunk) await onChunk(trimmed);
+          if (onChunk) {
+            const p = Promise.resolve(onChunk(trimmed));
+            inFlightChunks.push(p);
+            await p;
+          }
         },
         blockReplyBreak: "text_end",
         blockReplyChunking: {
@@ -248,11 +290,10 @@ export class CallAgent {
       // Send prompt to the SAME persistent session
       await session.prompt(userMessage);
 
-      // Unsubscribe
-      subscription.unsubscribe();
+      // Wait for any in-flight onChunk calls to complete
+      await Promise.allSettled(inFlightChunks);
 
       if (allChunks.length === 0) {
-        // Fallback: check last assistant message
         const msgs = session.messages || [];
         const lastAssistant = [...msgs].reverse().find((m: any) => m.role === "assistant");
         if (lastAssistant) {
@@ -269,20 +310,44 @@ export class CallAgent {
         text: allChunks.length > 0 ? allChunks.join(" ") : null,
         error: String(err),
       };
+    } finally {
+      // Always unsubscribe, even on error
+      subscription?.unsubscribe?.();
     }
   }
 
-  dispose(): void {
+  /**
+   * Release resources (session, lock, manager). Safe to call multiple times.
+   */
+  private _releaseResources(): void {
     try {
       this.session?.dispose?.();
-      this.session = null;
-      this.sessionLock?.release?.();
-      this.sessionLock = null;
-      this.sessionManager?.flush?.();
-      this.sessionManager = null;
     } catch (err) {
-      console.warn(`[voice-call] CallAgent dispose error:`, err);
+      console.warn(`[voice-call] CallAgent session dispose error:`, err);
     }
+    this.session = null;
+
+    try {
+      this.sessionLock?.release?.();
+    } catch (err) {
+      console.warn(`[voice-call] CallAgent lock release error:`, err);
+    }
+    this.sessionLock = null;
+
+    // SessionManager doesn't have flush() — just null the reference
+    this.sessionManager = null;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+
+    // If boot is still in progress, it will check disposed flag and clean up
+    if (this.bootPromise && !this.booted && !this.bootError) {
+      console.log(`[voice-call] CallAgent dispose called during boot, deferring cleanup`);
+      return;
+    }
+
+    this._releaseResources();
     console.log(`[voice-call] CallAgent disposed for ${this.from}`);
   }
 
@@ -292,10 +357,34 @@ export class CallAgent {
 }
 
 // ---------------------------------------------------------------------------
-// Per-call agent cache
+// Per-call agent cache with TTL cleanup
 // ---------------------------------------------------------------------------
 
 const callAgents = new Map<string, CallAgent>();
+
+/** Max agent idle time before forced cleanup (1 hour) */
+const AGENT_TTL_MS = 60 * 60 * 1000;
+
+/** Cleanup interval (every 5 minutes) */
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+
+let cleanupTimer: NodeJS.Timeout | null = null;
+
+function startCleanupTimer(): void {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [callId, agent] of callAgents) {
+      if (now - agent.lastActivityAt > AGENT_TTL_MS) {
+        console.log(`[voice-call] TTL cleanup: disposing stale agent for call ${callId}`);
+        agent.dispose();
+        callAgents.delete(callId);
+      }
+    }
+  }, CLEANUP_INTERVAL_MS);
+  // Don't prevent process exit
+  cleanupTimer.unref?.();
+}
 
 export function bootCallAgent(
   voiceConfig: VoiceCallConfig,
@@ -308,6 +397,7 @@ export function bootCallAgent(
 
   agent = new CallAgent(voiceConfig, coreConfig, callId, from);
   callAgents.set(callId, agent);
+  startCleanupTimer();
 
   agent.boot().catch((err) => {
     console.error(`[voice-call] CallAgent boot error for ${callId}:`, err);
