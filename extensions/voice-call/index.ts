@@ -1,6 +1,7 @@
 import type { GatewayRequestHandlerOptions, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { Type } from "@sinclair/typebox";
 import type { CoreConfig } from "./src/core-bridge.js";
+import type { VoiceCallHooks } from "./src/hooks.js";
 import { registerVoiceCallCli } from "./src/cli.js";
 import {
   VoiceCallConfigSchema,
@@ -9,6 +10,35 @@ import {
   type VoiceCallConfig,
 } from "./src/config.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
+
+/**
+ * Attempt to load PEAR voice hooks from the workspace extensions directory.
+ * Returns empty hooks if not found (graceful degradation).
+ */
+async function loadVoiceHooks(logger?: {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
+}): Promise<VoiceCallHooks | undefined> {
+  const log = logger ?? { info: console.log, warn: console.warn };
+  try {
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const hooksPath = path.join(
+      os.default.homedir(),
+      ".openclaw/workspace/extensions/pear-voice-hooks/dist/index.js",
+    );
+    const mod = await import(hooksPath);
+    if (typeof mod.createPearVoiceHooks === "function") {
+      const assetsDir = path.join(os.default.homedir(), ".openclaw/workspace/assets/audio");
+      const hooks = mod.createPearVoiceHooks({ assetsDir });
+      log.info("[voice-call] PEAR voice hooks loaded");
+      return hooks;
+    }
+  } catch {
+    // No hooks available — that's fine, run vanilla
+  }
+  return undefined;
+}
 
 const voiceCallConfigSchema = {
   parse(value: unknown): VoiceCallConfig {
@@ -179,6 +209,7 @@ const voiceCallPlugin = {
           coreConfig: api.config as CoreConfig,
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
+          hooks: await loadVoiceHooks(api.logger),
         });
       }
       runtime = await runtimePromise;
