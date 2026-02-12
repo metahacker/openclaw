@@ -155,6 +155,12 @@ export class CallAgent {
         throw new Error(`Model not found: ${provider}/${modelId}`);
       }
 
+      // 4b. Resolve API key from gateway's auth profile store and inject
+      const authResult = await core.getApiKeyForModel({ model, cfg, agentDir });
+      if (authResult.apiKey) {
+        authStorage.setRuntimeApiKey(model.provider, authResult.apiKey);
+      }
+
       const thinkLevel = deps.resolveThinkingDefault({ cfg, provider, model: modelId });
 
       // 5. Build voice system prompt

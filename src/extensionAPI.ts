@@ -25,3 +25,4 @@ export {
   applySystemPromptOverrideToSession,
   createSystemPromptOverride,
 } from "./agents/pi-embedded-runner/system-prompt.ts";
+export { getApiKeyForModel } from "./agents/model-auth.ts";
