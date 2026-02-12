@@ -124,17 +124,14 @@ export class CallAgent {
       const workspaceDir = deps.resolveAgentWorkspaceDir(cfg, agentId);
       await deps.ensureAgentWorkspace({ dir: workspaceDir });
 
-      // 2. Resolve session (keyed by phone)
+      // 2. Create fresh session per call (avoids stale subscription state from previous calls)
+      const sessionId = crypto.randomUUID();
       const normalizedPhone = this.from.replace(/\D/g, "");
-      const sessionKey = `voice:${normalizedPhone}`;
+      const sessionKey = `voice:${normalizedPhone}:${this.callId}`;
       const sessionStore = deps.loadSessionStore(storePath);
-      let entry = sessionStore[sessionKey] as SessionEntry | undefined;
-      if (!entry) {
-        entry = { sessionId: crypto.randomUUID(), updatedAt: Date.now() };
-        sessionStore[sessionKey] = entry;
-        await deps.saveSessionStore(storePath, sessionStore);
-      }
-      const sessionId = entry.sessionId;
+      const entry = { sessionId, updatedAt: Date.now() } as SessionEntry;
+      sessionStore[sessionKey] = entry;
+      await deps.saveSessionStore(storePath, sessionStore);
       const sessionFile = deps.resolveSessionFilePath(sessionId, entry, { agentId });
 
       // 3. Resolve model
@@ -282,9 +279,11 @@ export class CallAgent {
             `[voice-call] CallAgent chunk (${trimmed.length} chars): "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "..." : ""}"`,
           );
           if (onChunk) {
-            const p = Promise.resolve(onChunk(trimmed));
+            // Fire-and-forget: don't await TTS here, it blocks the prompt mutex
+            const p = Promise.resolve(onChunk(trimmed)).catch((e) =>
+              console.warn("[voice-call] onChunk error:", e),
+            );
             inFlightChunks.push(p);
-            await p;
           }
         },
         blockReplyBreak: "text_end",
