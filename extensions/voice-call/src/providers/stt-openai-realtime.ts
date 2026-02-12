@@ -131,6 +131,7 @@ class OpenAIRealtimeSTTSession implements RealtimeSTTSession {
             input_audio_format: "g711_ulaw",
             input_audio_transcription: {
               model: this.model,
+              language: "en",
             },
             turn_detection: {
               type: "server_vad",

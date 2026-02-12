@@ -279,11 +279,9 @@ export class CallAgent {
             `[voice-call] CallAgent chunk (${trimmed.length} chars): "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "..." : ""}"`,
           );
           if (onChunk) {
-            // Fire-and-forget: don't await TTS here, it blocks the prompt mutex
-            const p = Promise.resolve(onChunk(trimmed)).catch((e) =>
-              console.warn("[voice-call] onChunk error:", e),
-            );
+            const p = Promise.resolve(onChunk(trimmed));
             inFlightChunks.push(p);
+            await p;
           }
         },
         blockReplyBreak: "text_end",
