@@ -297,10 +297,20 @@ export class CallAgent {
       });
 
       // Send prompt to the SAME persistent session
+      const promptStart = Date.now();
+      console.log(
+        `[voice-call] CallAgent session.prompt() starting for "${userMessage.slice(0, 60)}..."`,
+      );
       await session.prompt(userMessage);
+      console.log(
+        `[voice-call] CallAgent session.prompt() completed in ${Date.now() - promptStart}ms`,
+      );
 
       // Wait for any in-flight onChunk calls to complete
       await Promise.allSettled(inFlightChunks);
+      console.log(
+        `[voice-call] CallAgent inFlightChunks settled (${inFlightChunks.length} chunks)`,
+      );
 
       if (allChunks.length === 0) {
         const msgs = session.messages || [];
