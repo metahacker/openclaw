@@ -84,9 +84,8 @@ jobs:
         env:
           MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
         run: |
-          # Write authenticated URL to a file Match can read (avoids GHA secret masking in env)
-          echo "https://metahacker:${MATCH_GIT_PAT}@github.com" > ~/.match-git-creds
-          git config --global credential.helper 'store --file ~/.match-git-creds'
+          # Write base64-encoded auth to file (avoids GHA secret masking corrupting env vars)
+          echo -n "metahacker:${MATCH_GIT_PAT}" | base64 -w 0 > /tmp/.match-auth
 
       - name: Build and upload to TestFlight
         env:
@@ -98,4 +97,6 @@ jobs:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_KEYCHAIN_NAME: build.keychain
           MATCH_KEYCHAIN_PASSWORD: ""
-        run: fastlane beta
+        run: |
+          export MATCH_GIT_BASIC_AUTHORIZATION=$(cat /tmp/.match-auth)
+          fastlane beta
