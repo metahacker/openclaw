@@ -75,6 +75,8 @@ jobs:
           sed -i '' "/CODE_SIGN_IDENTITY/d" project.yml
           sed -i '' "s/DEVELOPMENT_TEAM: Y5PE65HELJ/DEVELOPMENT_TEAM: ${IOS_DEVELOPMENT_TEAM}/g" project.yml
           sed -i '' "/PROVISIONING_PROFILE_SPECIFIER/d" project.yml
+          # Override Appfile bundle ID
+          sed -i '' "s/bot\.molt\.ios/${IOS_BUNDLE_ID}/g" fastlane/Appfile
           # Regenerate Xcode project
           xcodegen generate
 
