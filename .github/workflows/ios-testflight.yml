@@ -80,13 +80,6 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
 
-      - name: Configure git credentials for Match
-        env:
-          MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
-        run: |
-          git config --global credential.helper store
-          echo "https://metahacker:${MATCH_GIT_PAT}@github.com" > ~/.git-credentials
-
       - name: Build and upload to TestFlight
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -95,6 +88,7 @@ jobs:
           IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
           IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_URL: https://metahacker:${{ secrets.MATCH_GIT_PAT }}@github.com/metahacker/fastlane-certs
           MATCH_KEYCHAIN_NAME: build.keychain
           MATCH_KEYCHAIN_PASSWORD: ""
         run: fastlane beta
