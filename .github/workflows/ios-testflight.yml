@@ -1,0 +1,82 @@
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_build:
+        description: "Auto-increment build number"
+        required: false
+        default: "true"
+        type: boolean
+  push:
+    branches: [main]
+    paths:
+      - "apps/ios/**"
+      - "apps/shared/**"
+      - "Swabble/**"
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: true
+
+jobs:
+  build-and-upload:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/ios
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Select Xcode
+        run: |
+          # Use latest available Xcode
+          XCODE_PATH=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_PATH" ]; then
+            echo "No Xcode found"
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_PATH"
+          xcodebuild -version
+
+      - name: Install tools
+        run: brew install xcodegen fastlane
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-ios-${{ hashFiles('apps/ios/project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-ios-
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Override bundle ID
+        if: env.IOS_BUNDLE_ID != ''
+        env:
+          IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+        run: |
+          # Patch project.yml to use our bundle ID
+          sed -i '' "s/ai\.openclaw\.ios/$IOS_BUNDLE_ID/g" project.yml
+          # Regenerate with new bundle ID
+          xcodegen generate
+
+      - name: Build and upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        run: fastlane beta
