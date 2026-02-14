@@ -81,11 +81,12 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
 
       - name: Configure Match git access
-        env:
-          MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
         run: |
-          # Write base64-encoded auth to file (avoids GHA secret masking corrupting env vars)
-          echo -n "metahacker:${MATCH_GIT_PAT}" | base64 -w 0 > /tmp/.match-auth
+          # Use GITHUB_TOKEN (from actions/checkout) via git credential helper
+          # This avoids GHA secret masking which corrupts MATCH_GIT_BASIC_AUTHORIZATION
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        env:
+          GITHUB_TOKEN: ${{ secrets.MATCH_GIT_PAT }}
 
       - name: Build and upload to TestFlight
         env:
@@ -97,6 +98,4 @@ jobs:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_KEYCHAIN_NAME: build.keychain
           MATCH_KEYCHAIN_PASSWORD: ""
-        run: |
-          export MATCH_GIT_BASIC_AUTHORIZATION=$(cat /tmp/.match-auth)
-          fastlane beta
+        run: fastlane beta
