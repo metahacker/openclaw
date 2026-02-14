@@ -71,26 +71,14 @@ platform :ios do
     end
     UI.user_error!("Missing IOS_DEVELOPMENT_TEAM (Apple Team ID). Add it to fastlane/.env or export it in your shell.") if team_id.nil? || team_id.strip.empty?
 
-    # Install signing certificates and provisioning profiles via Match
-    match(
-      type: "appstore",
-      app_identifier: ENV["IOS_BUNDLE_ID"] || "ai.mypear.openclaw",
-      team_id: team_id,
-      api_key: api_key,
-      readonly: ENV["MATCH_READONLY"] == "true"
-    )
-
     build_app(
       project: "OpenClaw.xcodeproj",
       scheme: "OpenClaw",
       export_method: "app-store",
       clean: true,
-      xcargs: "DEVELOPMENT_TEAM=#{team_id}",
+      xcargs: "DEVELOPMENT_TEAM=#{team_id} -allowProvisioningUpdates -authenticationKeyPath '#{ENV["ASC_KEY_PATH"]}' -authenticationKeyID '#{ENV["ASC_KEY_ID"]}' -authenticationKeyIssuerID '#{ENV["ASC_ISSUER_ID"]}'",
       export_options: {
-        signingStyle: "manual",
-        provisioningProfiles: {
-          (ENV["IOS_BUNDLE_ID"] || "ai.mypear.openclaw") => "match AppStore #{ENV["IOS_BUNDLE_ID"] || "ai.mypear.openclaw"}"
-        }
+        signingStyle: "automatic"
       }
     )
 

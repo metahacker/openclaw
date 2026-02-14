@@ -80,22 +80,21 @@ jobs:
           security unlock-keychain -p "" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
 
-      - name: Configure Match git access
-        run: |
-          # Use GITHUB_TOKEN (from actions/checkout) via git credential helper
-          # This avoids GHA secret masking which corrupts MATCH_GIT_BASIC_AUTHORIZATION
-          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - name: Write API key file
         env:
-          GITHUB_TOKEN: ${{ secrets.MATCH_GIT_PAT }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "$ASC_KEY_CONTENT" > ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
 
       - name: Build and upload to TestFlight
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          ASC_KEY_PATH: ~/private_keys/AuthKey_${{ secrets.ASC_KEY_ID }}.p8
           IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
           IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
-          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_KEYCHAIN_NAME: build.keychain
           MATCH_KEYCHAIN_PASSWORD: ""
         run: fastlane beta
