@@ -72,7 +72,7 @@ jobs:
           sed -i '' "s/ai\.openclaw\.ios/${IOS_BUNDLE_ID}/g" project.yml
           # Override signing: switch from manual to automatic, update team
           sed -i '' "s/CODE_SIGN_STYLE: Manual/CODE_SIGN_STYLE: Automatic/g" project.yml
-          sed -i '' "s/CODE_SIGN_IDENTITY: \"Apple Development\"/CODE_SIGN_IDENTITY: \"Apple Distribution\"/g" project.yml
+          sed -i '' "/CODE_SIGN_IDENTITY/d" project.yml
           sed -i '' "s/DEVELOPMENT_TEAM: Y5PE65HELJ/DEVELOPMENT_TEAM: ${IOS_DEVELOPMENT_TEAM}/g" project.yml
           sed -i '' "/PROVISIONING_PROFILE_SPECIFIER/d" project.yml
           # Regenerate Xcode project
