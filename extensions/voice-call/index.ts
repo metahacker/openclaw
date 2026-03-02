@@ -1,5 +1,7 @@
-import { Type } from "@sinclair/typebox";
 import type { GatewayRequestHandlerOptions, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { Type } from "@sinclair/typebox";
+import type { CoreConfig } from "./src/core-bridge.js";
+import type { VoiceCallHooks } from "./src/hooks.js";
 import { registerVoiceCallCli } from "./src/cli.js";
 import {
   VoiceCallConfigSchema,
@@ -7,8 +9,50 @@ import {
   validateProviderConfig,
   type VoiceCallConfig,
 } from "./src/config.js";
-import type { CoreConfig } from "./src/core-bridge.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./src/runtime.js";
+
+/**
+ * Build a VoiceCallHooks bridge that delegates to the core plugin hook system.
+ * This allows any plugin to register voice-call hooks via api.on('voice_call:*', ...),
+ * and the voice-call extension will call them through this bridge.
+ */
+function buildHookBridge(api: OpenClawPluginApi): VoiceCallHooks {
+  return {
+    onStreamReady: async (ctx) => {
+      const result = await api.emit(
+        "voice_call:stream_ready",
+        { callId: ctx.callId, streamSid: ctx.streamSid },
+        ctx,
+      );
+      return result as { skipDefaultGreeting?: boolean } | undefined;
+    },
+    onProcessingStart: (ctx) => {
+      void api.emit(
+        "voice_call:processing_start",
+        { callId: ctx.callId, streamSid: ctx.streamSid },
+        ctx,
+      );
+    },
+    onProcessingEnd: (ctx) => {
+      void api.emit(
+        "voice_call:processing_end",
+        { callId: ctx.callId, streamSid: ctx.streamSid },
+        ctx,
+      );
+    },
+    transformTtsText: async (text) => {
+      const result = await api.emit(
+        "voice_call:transform_tts",
+        { text },
+        {} as Record<string, never>,
+      );
+      return (result as { text?: string } | undefined)?.text;
+    },
+    onCallEnd: (callId) => {
+      void api.emit("voice_call:call_end", { callId }, {} as Record<string, never>);
+    },
+  };
+}
 
 const voiceCallConfigSchema = {
   parse(value: unknown): VoiceCallConfig {
@@ -179,6 +223,7 @@ const voiceCallPlugin = {
           coreConfig: api.config as CoreConfig,
           ttsRuntime: api.runtime.tts,
           logger: api.logger,
+          hooks: buildHookBridge(api),
         });
       }
       runtime = await runtimePromise;

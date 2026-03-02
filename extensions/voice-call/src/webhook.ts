@@ -8,13 +8,14 @@ import {
 } from "openclaw/plugin-sdk";
 import type { VoiceCallConfig } from "./config.js";
 import type { CoreConfig } from "./core-bridge.js";
+import type { VoiceCallHooks, StreamAudioContext } from "./hooks.js";
 import type { CallManager } from "./manager.js";
 import type { MediaStreamConfig } from "./media-stream.js";
-import { MediaStreamHandler } from "./media-stream.js";
 import type { VoiceCallProvider } from "./providers/base.js";
-import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
+import { MediaStreamHandler } from "./media-stream.js";
+import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
 import { startStaleCallReaper } from "./webhook/stale-call-reaper.js";
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
@@ -39,11 +40,13 @@ export class VoiceCallWebhookServer {
     manager: CallManager,
     provider: VoiceCallProvider,
     coreConfig?: CoreConfig,
+    hooks?: VoiceCallHooks,
   ) {
     this.config = config;
     this.manager = manager;
     this.provider = provider;
     this.coreConfig = coreConfig ?? null;
+    this.hooks = hooks ?? {};
 
     // Initialize media stream handler if streaming is enabled
     if (config.streaming?.enabled) {
@@ -147,23 +150,57 @@ export class VoiceCallWebhookServer {
           (this.provider as TwilioProvider).registerCallStream(callId, streamSid);
         }
 
-        // Speak initial message if one was provided when call was initiated
-        // Use setTimeout to allow stream setup to complete
+        // Build stream audio context for hooks
+        const buildStreamCtx = (): StreamAudioContext | null => {
+          if (this.provider.name !== "twilio") return null;
+          const twilio = this.provider as TwilioProvider;
+          return {
+            callId,
+            streamSid,
+            sendAudio: (buf: Buffer) => twilio.sendAudioToStream(callId, buf),
+            clearAudio: () => twilio.clearTtsQueue(callId),
+          };
+        };
+
+        // Call onStreamReady hook, then speak initial message
+        const streamCtx = buildStreamCtx();
+        const runGreeting = async () => {
+          let skipDefault = false;
+          if (this.hooks.onStreamReady && streamCtx) {
+            try {
+              const result = await this.hooks.onStreamReady(streamCtx);
+              if (result?.skipDefaultGreeting) skipDefault = true;
+            } catch (err) {
+              console.warn(`[voice-call] onStreamReady hook error:`, err);
+            }
+          }
+          if (!skipDefault) {
+            this.manager.speakInitialMessage(callId).catch((err) => {
+              console.warn(`[voice-call] Failed to speak initial message:`, err);
+            });
+          }
+        };
+
+        // Delay slightly to allow stream setup, then run greeting sequence
         setTimeout(() => {
-          this.manager.speakInitialMessage(callId).catch((err) => {
-            console.warn(`[voice-call] Failed to speak initial message:`, err);
+          runGreeting().catch((err) => {
+            console.warn(`[voice-call] Greeting sequence error:`, err);
           });
         }, 500);
       },
       onDisconnect: (callId) => {
         console.log(`[voice-call] Media stream disconnected: ${callId}`);
-        // Auto-end call when media stream disconnects to prevent stuck calls.
-        // Without this, calls can remain active indefinitely after the stream closes.
         const disconnectedCall = this.manager.getCallByProviderCallId(callId);
         if (disconnectedCall) {
           console.log(
             `[voice-call] Auto-ending call ${disconnectedCall.callId} on stream disconnect`,
           );
+          // Fire onCallEnd hook
+          try {
+            this.hooks.onCallEnd?.(disconnectedCall.callId);
+          } catch (err) {
+            console.warn(`[voice-call] onCallEnd hook error:`, err);
+          }
           void this.manager.endCall(disconnectedCall.callId).catch((err) => {
             console.warn(`[voice-call] Failed to auto-end call ${disconnectedCall.callId}:`, err);
           });
@@ -367,10 +404,39 @@ export class VoiceCallWebhookServer {
    * Handle auto-response for inbound calls using the agent system.
    * Supports tool calling for richer voice interactions.
    */
+  /**
+   * Build a StreamAudioContext for the given call, if Twilio streaming is active.
+   */
+  private buildStreamAudioContext(providerCallId: string): StreamAudioContext | null {
+    if (this.provider.name !== "twilio") return null;
+    const twilio = this.provider as TwilioProvider;
+    const streamSid = twilio.getStreamSid(providerCallId);
+    if (!streamSid) return null;
+    return {
+      callId: providerCallId,
+      streamSid,
+      sendAudio: (buf: Buffer) => twilio.sendAudioToStream(providerCallId, buf),
+      clearAudio: () => twilio.clearTtsQueue(providerCallId),
+    };
+  }
+
+  /**
+   * Apply transformTtsText hook if present, otherwise return original text.
+   */
+  private async applyTtsTransform(text: string): Promise<string> {
+    if (!this.hooks.transformTtsText) return text;
+    try {
+      const transformed = await this.hooks.transformTtsText(text);
+      return transformed ?? text;
+    } catch (err) {
+      console.warn(`[voice-call] transformTtsText hook error:`, err);
+      return text;
+    }
+  }
+
   private async handleInboundResponse(callId: string, userMessage: string): Promise<void> {
     console.log(`[voice-call] Auto-responding to inbound call ${callId}: "${userMessage}"`);
 
-    // Get call context for conversation history
     const call = this.manager.getCall(callId);
     if (!call) {
       console.warn(`[voice-call] Call ${callId} not found for auto-response`);
@@ -382,9 +448,19 @@ export class VoiceCallWebhookServer {
       return;
     }
 
+    // Fire onProcessingStart hook
+    const providerCallId = call.providerCallId;
+    const streamCtx = providerCallId ? this.buildStreamAudioContext(providerCallId) : null;
+    if (this.hooks.onProcessingStart && streamCtx) {
+      try {
+        this.hooks.onProcessingStart(streamCtx);
+      } catch (err) {
+        console.warn(`[voice-call] onProcessingStart hook error:`, err);
+      }
+    }
+
     try {
       const { generateVoiceResponse } = await import("./response-generator.js");
-
       const result = await generateVoiceResponse({
         voiceConfig: this.config,
         coreConfig: this.coreConfig,
@@ -396,14 +472,34 @@ export class VoiceCallWebhookServer {
 
       if (result.error) {
         console.error(`[voice-call] Response generation error: ${result.error}`);
-        return;
       }
 
-      if (result.text) {
-        console.log(`[voice-call] AI response: "${result.text}"`);
-        await this.manager.speak(callId, result.text);
+      const responseText = result.text;
+
+      // Fire onProcessingEnd hook (before TTS, so presence sounds stop)
+      if (this.hooks.onProcessingEnd && streamCtx) {
+        try {
+          this.hooks.onProcessingEnd(streamCtx);
+        } catch (err) {
+          console.warn(`[voice-call] onProcessingEnd hook error:`, err);
+        }
+      }
+
+      if (responseText) {
+        // Apply TTS text transformation hook
+        const transformedText = await this.applyTtsTransform(responseText);
+        console.log(`[voice-call] AI response: "${transformedText}"`);
+        await this.manager.speak(callId, transformedText);
       }
     } catch (err) {
+      // Ensure onProcessingEnd fires even on error
+      if (this.hooks.onProcessingEnd && streamCtx) {
+        try {
+          this.hooks.onProcessingEnd(streamCtx);
+        } catch (hookErr) {
+          console.warn(`[voice-call] onProcessingEnd hook error:`, hookErr);
+        }
+      }
       console.error(`[voice-call] Auto-response error:`, err);
     }
   }

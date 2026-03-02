@@ -1,13 +1,14 @@
 import type { VoiceCallConfig } from "./config.js";
-import { resolveVoiceCallConfig, validateProviderConfig } from "./config.js";
 import type { CoreConfig } from "./core-bridge.js";
-import { CallManager } from "./manager.js";
+import type { VoiceCallHooks } from "./hooks.js";
 import type { VoiceCallProvider } from "./providers/base.js";
+import type { TelephonyTtsRuntime } from "./telephony-tts.js";
+import { resolveVoiceCallConfig, validateProviderConfig } from "./config.js";
+import { CallManager } from "./manager.js";
 import { MockProvider } from "./providers/mock.js";
 import { PlivoProvider } from "./providers/plivo.js";
 import { TelnyxProvider } from "./providers/telnyx.js";
 import { TwilioProvider } from "./providers/twilio.js";
-import type { TelephonyTtsRuntime } from "./telephony-tts.js";
 import { createTelephonyTtsProvider } from "./telephony-tts.js";
 import { startTunnel, type TunnelResult } from "./tunnel.js";
 import {
@@ -97,8 +98,9 @@ export async function createVoiceCallRuntime(params: {
   coreConfig: CoreConfig;
   ttsRuntime?: TelephonyTtsRuntime;
   logger?: Logger;
+  hooks?: VoiceCallHooks;
 }): Promise<VoiceCallRuntime> {
-  const { config: rawConfig, coreConfig, ttsRuntime, logger } = params;
+  const { config: rawConfig, coreConfig, ttsRuntime, logger, hooks } = params;
   const log = logger ?? {
     info: console.log,
     warn: console.warn,
@@ -125,7 +127,7 @@ export async function createVoiceCallRuntime(params: {
 
   const provider = resolveProvider(config);
   const manager = new CallManager(config);
-  const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig);
+  const webhookServer = new VoiceCallWebhookServer(config, manager, provider, coreConfig, hooks);
 
   const localUrl = await webhookServer.start();
 
