@@ -16,6 +16,7 @@ import type { TwilioProvider } from "./providers/twilio.js";
 import type { NormalizedEvent, WebhookContext } from "./types.js";
 import { MediaStreamHandler } from "./media-stream.js";
 import { OpenAIRealtimeSTTProvider } from "./providers/stt-openai-realtime.js";
+import { WarmAgentContext } from "./warm-agent.js";
 import { startStaleCallReaper } from "./webhook/stale-call-reaper.js";
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
@@ -150,6 +151,21 @@ export class VoiceCallWebhookServer {
           (this.provider as TwilioProvider).registerCallStream(callId, streamSid);
         }
 
+        // Boot warm agent in parallel with greeting
+        const call = this.manager.getCallByProviderCallId(callId);
+        if (call && this.coreConfig) {
+          const warmAgent = new WarmAgentContext(
+            this.config,
+            this.coreConfig,
+            call.callId,
+            call.from,
+          );
+          this.warmAgents.set(call.callId, warmAgent);
+          warmAgent.boot().catch((err) => {
+            console.warn(`[voice-call] Warm agent boot failed:`, err);
+          });
+        }
+
         // Build stream audio context for hooks
         const buildStreamCtx = (): StreamAudioContext | null => {
           if (this.provider.name !== "twilio") return null;
@@ -195,6 +211,8 @@ export class VoiceCallWebhookServer {
           console.log(
             `[voice-call] Auto-ending call ${disconnectedCall.callId} on stream disconnect`,
           );
+          // Clean up warm agent
+          this.warmAgents.delete(disconnectedCall.callId);
           // Fire onCallEnd hook
           try {
             this.hooks.onCallEnd?.(disconnectedCall.callId);
@@ -460,21 +478,32 @@ export class VoiceCallWebhookServer {
     }
 
     try {
-      const { generateVoiceResponse } = await import("./response-generator.js");
-      const result = await generateVoiceResponse({
-        voiceConfig: this.config,
-        coreConfig: this.coreConfig,
-        callId,
-        from: call.from,
-        transcript: call.transcript,
-        userMessage,
-      });
+      let responseText: string | null = null;
 
-      if (result.error) {
-        console.error(`[voice-call] Response generation error: ${result.error}`);
+      // Prefer warm agent (pre-booted, lower latency) over cold generateVoiceResponse
+      const warmAgent = this.warmAgents.get(callId);
+      if (warmAgent?.isReady) {
+        const result = await warmAgent.respond(userMessage, call.transcript);
+        if (result.error) {
+          console.error(`[voice-call] Warm agent error: ${result.error}`);
+        }
+        responseText = result.text;
+      } else {
+        // Fallback to cold path
+        const { generateVoiceResponse } = await import("./response-generator.js");
+        const result = await generateVoiceResponse({
+          voiceConfig: this.config,
+          coreConfig: this.coreConfig,
+          callId,
+          from: call.from,
+          transcript: call.transcript,
+          userMessage,
+        });
+        if (result.error) {
+          console.error(`[voice-call] Response generation error: ${result.error}`);
+        }
+        responseText = result.text;
       }
-
-      const responseText = result.text;
 
       // Fire onProcessingEnd hook (before TTS, so presence sounds stop)
       if (this.hooks.onProcessingEnd && streamCtx) {
