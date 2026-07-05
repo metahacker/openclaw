@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-upload:
     name: Build and Upload
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
@@ -44,14 +44,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -d /Applications/Xcode_16.4.app ]]; then
-            sudo xcode-select -s /Applications/Xcode_16.4.app
-          elif [[ -d /Applications/Xcode_16.3.app ]]; then
-            sudo xcode-select -s /Applications/Xcode_16.3.app
-          else
-            sudo xcode-select -s /Applications/Xcode.app
+          echo "Available Xcodes:"; ls -d /Applications/Xcode*.app 2>/dev/null || true
+          # App Store Connect requires the iOS 26 SDK (Xcode 26+). Pick the newest 26.x, else newest available.
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -z "${XC}" ]]; then
+            XC="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -1 || true)"
           fi
+          if [[ -z "${XC}" ]]; then
+            XC="/Applications/Xcode.app"
+          fi
+          echo "Selecting ${XC}"
+          sudo xcode-select -s "${XC}"
           xcodebuild -version
+          echo "iOS SDKs:"; xcodebuild -showsdks 2>/dev/null | grep -i "iphoneos" || true
 
       - name: Install build tools
         shell: bash
