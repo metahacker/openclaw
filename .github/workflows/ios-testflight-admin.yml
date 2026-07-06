@@ -313,6 +313,67 @@ jobs:
             }
           }
 
+          async function ensureBetaBuildLocalization(buildId) {
+            const attributes = {
+              whatsNew: "Hello-world TestFlight deployment smoke test from OpenClaw.",
+            };
+
+            const existing = await request("GET", `/builds/${buildId}/betaBuildLocalizations`, undefined, { allowFailure: true });
+            if (existing.ok && existing.json?.data?.length) {
+              const localization = existing.json.data[0];
+              const result = await request("PATCH", `/betaBuildLocalizations/${localization.id}`, {
+                data: {
+                  type: "betaBuildLocalizations",
+                  id: localization.id,
+                  attributes,
+                },
+              }, { allowFailure: true });
+              if (result.ok) {
+                console.log(`Updated beta build localization ${localization.id}.`);
+              }
+              return;
+            }
+
+            const result = await request("POST", "/betaBuildLocalizations", {
+              data: {
+                type: "betaBuildLocalizations",
+                attributes: {
+                  locale: "en-US",
+                  ...attributes,
+                },
+                relationships: {
+                  build: { data: { type: "builds", id: buildId } },
+                },
+              },
+            }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Created beta build localization ${result.json.data.id}.`);
+            }
+          }
+
+          async function ensureBetaAppReviewDetail(appId) {
+            const detail = await request("GET", `/apps/${appId}/betaAppReviewDetail`, undefined, { allowFailure: true });
+            if (!detail.ok || !detail.json?.data?.id) return;
+
+            const attributes = {
+              contactFirstName: "Alex",
+              contactLastName: "Markson",
+              contactEmail: "alex@metahack.io",
+              notes: "This is a minimal SwiftUI hello-world build used to validate the OpenClaw iOS TestFlight deployment pipeline. No login is required.",
+            };
+
+            const result = await request("PATCH", `/betaAppReviewDetails/${detail.json.data.id}`, {
+              data: {
+                type: "betaAppReviewDetails",
+                id: detail.json.data.id,
+                attributes,
+              },
+            }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Updated beta app review detail ${detail.json.data.id}.`);
+            }
+          }
+
           async function enablePublicLink(groupId) {
             const limit = Number.parseInt(process.env.PUBLIC_LINK_LIMIT || "100", 10);
             const payload = {
@@ -349,6 +410,8 @@ jobs:
 
             await ensureUserInvitation(app.id);
             await ensureBetaAppLocalization(app.id);
+            await ensureBetaBuildLocalization(latest.id);
+            await ensureBetaAppReviewDetail(app.id);
             await markExportCompliance(latest.id);
 
             const externalGroup = await ensureBetaGroup(app.id, process.env.EXTERNAL_GROUP_NAME || "Public Beta");
