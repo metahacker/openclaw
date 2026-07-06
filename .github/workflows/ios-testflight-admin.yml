@@ -139,7 +139,7 @@ jobs:
                 url.searchParams.set(key, value);
               }
             }
-            return `${url.pathname}${url.search}`;
+            return `${path}${url.search}`;
           }
 
           async function first(path, params) {
