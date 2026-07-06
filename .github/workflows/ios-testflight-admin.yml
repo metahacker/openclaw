@@ -274,6 +274,45 @@ jobs:
             }
           }
 
+          async function ensureBetaAppLocalization(appId) {
+            const attributes = {
+              description: "OpenClaw PEAR hello-world TestFlight build for validating automated iOS deployment from OpenClaw.",
+              feedbackEmail: "alex@metahack.io",
+            };
+
+            const existing = await request("GET", `/apps/${appId}/betaAppLocalizations`, undefined, { allowFailure: true });
+            if (existing.ok && existing.json?.data?.length) {
+              const localization = existing.json.data[0];
+              const result = await request("PATCH", `/betaAppLocalizations/${localization.id}`, {
+                data: {
+                  type: "betaAppLocalizations",
+                  id: localization.id,
+                  attributes,
+                },
+              }, { allowFailure: true });
+              if (result.ok) {
+                console.log(`Updated beta app localization ${localization.id}.`);
+              }
+              return;
+            }
+
+            const result = await request("POST", "/betaAppLocalizations", {
+              data: {
+                type: "betaAppLocalizations",
+                attributes: {
+                  locale: "en-US",
+                  ...attributes,
+                },
+                relationships: {
+                  app: { data: { type: "apps", id: appId } },
+                },
+              },
+            }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Created beta app localization ${result.json.data.id}.`);
+            }
+          }
+
           async function enablePublicLink(groupId) {
             const limit = Number.parseInt(process.env.PUBLIC_LINK_LIMIT || "100", 10);
             const payload = {
@@ -309,6 +348,7 @@ jobs:
             console.log(`Latest build: id=${latest.id}, version=${latest.attributes?.version}, processingState=${latest.attributes?.processingState}, uploadedDate=${latest.attributes?.uploadedDate}`);
 
             await ensureUserInvitation(app.id);
+            await ensureBetaAppLocalization(app.id);
             await markExportCompliance(latest.id);
 
             const externalGroup = await ensureBetaGroup(app.id, process.env.EXTERNAL_GROUP_NAME || "Public Beta");

@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - pear-ios-hello-testflight
+    paths:
+      - .github/workflows/ios-hello-testflight.yml
+      - apps/ios/**
   workflow_dispatch:
 
 permissions:
