@@ -327,6 +327,27 @@ jobs:
             console.log(`Internal tester membership: tester=${testerId}, group=${groupId}, attached=${attached ? "yes" : "unknown/no"}.`);
           }
 
+          async function sendBetaTesterInvitation(appId, testerId) {
+            const result = await request("POST", "/betaTesterInvitations", {
+              data: {
+                type: "betaTesterInvitations",
+                relationships: {
+                  app: { data: { type: "apps", id: appId } },
+                  betaTester: { data: { type: "betaTesters", id: testerId } },
+                },
+              },
+            }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Sent TestFlight beta tester invitation for tester=${testerId}, app=${appId}.`);
+              return;
+            }
+            if (result.status === 409) {
+              console.log(`TestFlight beta tester invitation already exists for tester=${testerId}, app=${appId}.`);
+              return;
+            }
+            console.log(`Could not send TestFlight beta tester invitation for tester=${testerId}, app=${appId}; Apple returned status ${result.status}.`);
+          }
+
           async function ensureBetaGroup(appId, name) {
             const groups = await all("/betaGroups", {
               "filter[app]": appId,
@@ -538,6 +559,7 @@ jobs:
             const internalTester = await ensureBetaTester(app.id);
             await attachTesterToGroup(internalTester.id, internalGroup.id);
             await logGroupTesterMembership(internalGroup.id, internalTester.id);
+            await sendBetaTesterInvitation(app.id, internalTester.id);
             const refreshedInternalGroup = await request("GET", `/betaGroups/${internalGroup.id}`);
             console.log(`Internal testing summary: group=${internalGroup.id}, tester=${internalTester.id}, latestBuild=${latest.id}, hasAccessToAllBuilds=${refreshedInternalGroup.json.data.attributes?.hasAccessToAllBuilds}.`);
 
