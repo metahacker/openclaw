@@ -24,6 +24,7 @@ jobs:
       INTERNAL_TESTER_EMAIL: alex@metahacking.org
       INTERNAL_TESTER_FIRST_NAME: Alex
       INTERNAL_TESTER_LAST_NAME: Markson
+      INTERNAL_GROUP_NAME: Internal Testers
       EXTERNAL_GROUP_NAME: Public Beta
       PUBLIC_LINK_LIMIT: "100"
       BETA_REVIEW_CONTACT_PHONE: ${{ secrets.BETA_REVIEW_CONTACT_PHONE }}
@@ -171,14 +172,14 @@ jobs:
             if (existingUser.ok && existingUser.json?.data?.length) {
               const user = existingUser.json.data[0];
               console.log(`Internal tester Apple ID is already an App Store Connect user: ${email} (user ${user.id}).`);
-              return;
+              return user;
             }
 
             const existingInvitation = await request("GET", query("/userInvitations", { "filter[email]": email }), undefined, { allowFailure: true });
             if (existingInvitation.ok && existingInvitation.json?.data?.length) {
               const invite = existingInvitation.json.data[0];
               console.log(`Internal tester invitation already exists for ${email} (invitation ${invite.id}).`);
-              return;
+              return null;
             }
 
             const payload = {
@@ -207,6 +208,91 @@ jobs:
             if (result.ok) {
               console.log(`Sent App Store Connect invitation to ${email} scoped to app ${appId}.`);
             }
+            return null;
+          }
+
+          async function ensureInternalBetaGroup(appId, name) {
+            const groups = await all("/betaGroups", {
+              "filter[app]": appId,
+              "filter[name]": name,
+              limit: "10",
+            });
+            const existing = groups.find((group) => group.attributes?.name === name);
+            if (existing) {
+              console.log(`Found internal beta group "${name}" (${existing.id}). isInternalGroup=${existing.attributes?.isInternalGroup}, hasAccessToAllBuilds=${existing.attributes?.hasAccessToAllBuilds}`);
+              if (!existing.attributes?.isInternalGroup) {
+                throw new Error(`Beta group "${name}" exists but is not an internal group.`);
+              }
+              return existing;
+            }
+
+            const result = await request("POST", "/betaGroups", {
+              data: {
+                type: "betaGroups",
+                attributes: {
+                  name,
+                  isInternalGroup: true,
+                  hasAccessToAllBuilds: true,
+                },
+                relationships: {
+                  app: { data: { type: "apps", id: appId } },
+                },
+              },
+            });
+            console.log(`Created internal beta group "${name}" (${result.json.data.id}).`);
+            return result.json.data;
+          }
+
+          async function ensureBetaTester(appId) {
+            const email = process.env.INTERNAL_TESTER_EMAIL;
+            const existing = await request("GET", query("/betaTesters", {
+              "filter[email]": email,
+              limit: "10",
+            }), undefined, { allowFailure: true });
+            if (existing.ok && existing.json?.data?.length) {
+              const tester = existing.json.data[0];
+              console.log(`Found beta tester ${email} (${tester.id}).`);
+              return tester;
+            }
+
+            const result = await request("POST", "/betaTesters", {
+              data: {
+                type: "betaTesters",
+                attributes: {
+                  email,
+                  firstName: process.env.INTERNAL_TESTER_FIRST_NAME || "Alex",
+                  lastName: process.env.INTERNAL_TESTER_LAST_NAME || "Markson",
+                },
+                relationships: {
+                  apps: { data: [{ type: "apps", id: appId }] },
+                },
+              },
+            }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Created beta tester ${email} (${result.json.data.id}).`);
+              return result.json.data;
+            }
+
+            const retry = await request("GET", query("/betaTesters", {
+              "filter[email]": email,
+              limit: "10",
+            }), undefined, { allowFailure: true });
+            if (retry.ok && retry.json?.data?.length) {
+              const tester = retry.json.data[0];
+              console.log(`Found beta tester ${email} after create conflict (${tester.id}).`);
+              return tester;
+            }
+
+            throw new Error(`Could not find or create beta tester record for ${email}.`);
+          }
+
+          async function attachTesterToGroup(testerId, groupId) {
+            return await ignoreConflict(
+              request("POST", `/betaGroups/${groupId}/relationships/betaTesters`, {
+                data: [{ type: "betaTesters", id: testerId }],
+              }, { allowFailure: true }),
+              `Beta tester ${testerId} on beta group ${groupId}`,
+            );
           }
 
           async function ensureBetaGroup(appId, name) {
@@ -415,6 +501,12 @@ jobs:
             await ensureBetaBuildLocalization(latest.id);
             await ensureBetaAppReviewDetail(app.id);
             await markExportCompliance(latest.id);
+
+            const internalGroup = await ensureInternalBetaGroup(app.id, process.env.INTERNAL_GROUP_NAME || "Internal Testers");
+            const internalTester = await ensureBetaTester(app.id);
+            await attachTesterToGroup(internalTester.id, internalGroup.id);
+            await attachBuildToGroup(latest.id, internalGroup.id);
+            console.log(`Internal testing summary: group=${internalGroup.id}, tester=${internalTester.id}, build=${latest.id}.`);
 
             const externalGroup = await ensureBetaGroup(app.id, process.env.EXTERNAL_GROUP_NAME || "Public Beta");
             await attachBuildToGroup(latest.id, externalGroup.id);
