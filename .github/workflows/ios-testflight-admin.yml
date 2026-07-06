@@ -166,6 +166,26 @@ jobs:
             }
           }
 
+          async function ensureBetaGroupAllBuilds(group) {
+            if (group.attributes?.hasAccessToAllBuilds) return group;
+
+            const result = await request("PATCH", `/betaGroups/${group.id}`, {
+              data: {
+                type: "betaGroups",
+                id: group.id,
+                attributes: {
+                  hasAccessToAllBuilds: true,
+                },
+              },
+            }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Enabled all-build access for beta group "${group.attributes?.name}" (${group.id}).`);
+              return result.json.data;
+            }
+            console.log(`Could not enable all-build access for beta group "${group.attributes?.name}" (${group.id}); continuing with current Apple state.`);
+            return group;
+          }
+
           async function ensureUserInvitation(appId) {
             const email = process.env.INTERNAL_TESTER_EMAIL;
             const existingUser = await request("GET", query("/users", { "filter[username]": email }), undefined, { allowFailure: true });
@@ -223,7 +243,7 @@ jobs:
               if (!existing.attributes?.isInternalGroup) {
                 throw new Error(`Beta group "${name}" exists but is not an internal group.`);
               }
-              return existing;
+              return await ensureBetaGroupAllBuilds(existing);
             }
 
             const result = await request("POST", "/betaGroups", {
@@ -240,7 +260,7 @@ jobs:
               },
             });
             console.log(`Created internal beta group "${name}" (${result.json.data.id}).`);
-            return result.json.data;
+            return await ensureBetaGroupAllBuilds(result.json.data);
           }
 
           async function ensureBetaTester(appId) {
@@ -287,12 +307,24 @@ jobs:
           }
 
           async function attachTesterToGroup(testerId, groupId) {
-            return await ignoreConflict(
-              request("POST", `/betaGroups/${groupId}/relationships/betaTesters`, {
+            const result = await request("POST", `/betaGroups/${groupId}/relationships/betaTesters`, {
                 data: [{ type: "betaTesters", id: testerId }],
-              }, { allowFailure: true }),
-              `Beta tester ${testerId} on beta group ${groupId}`,
-            );
+              }, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Attached beta tester ${testerId} to beta group ${groupId}.`);
+              return result;
+            }
+            if (result.status === 409) {
+              console.log(`Beta tester ${testerId} is already attached to beta group ${groupId}.`);
+              return result;
+            }
+            throw new Error(`Could not attach beta tester ${testerId} to beta group ${groupId}.`);
+          }
+
+          async function logGroupTesterMembership(groupId, testerId) {
+            const result = await request("GET", `/betaGroups/${groupId}/relationships/betaTesters?limit=200`, undefined, { allowFailure: true });
+            const attached = result.ok && result.json?.data?.some((tester) => tester.type === "betaTesters" && tester.id === testerId);
+            console.log(`Internal tester membership: tester=${testerId}, group=${groupId}, attached=${attached ? "yes" : "unknown/no"}.`);
           }
 
           async function ensureBetaGroup(appId, name) {
@@ -505,8 +537,9 @@ jobs:
             const internalGroup = await ensureInternalBetaGroup(app.id, process.env.INTERNAL_GROUP_NAME || "Internal Testers");
             const internalTester = await ensureBetaTester(app.id);
             await attachTesterToGroup(internalTester.id, internalGroup.id);
-            await attachBuildToGroup(latest.id, internalGroup.id);
-            console.log(`Internal testing summary: group=${internalGroup.id}, tester=${internalTester.id}, build=${latest.id}.`);
+            await logGroupTesterMembership(internalGroup.id, internalTester.id);
+            const refreshedInternalGroup = await request("GET", `/betaGroups/${internalGroup.id}`);
+            console.log(`Internal testing summary: group=${internalGroup.id}, tester=${internalTester.id}, latestBuild=${latest.id}, hasAccessToAllBuilds=${refreshedInternalGroup.json.data.attributes?.hasAccessToAllBuilds}.`);
 
             const externalGroup = await ensureBetaGroup(app.id, process.env.EXTERNAL_GROUP_NAME || "Public Beta");
             await attachBuildToGroup(latest.id, externalGroup.id);
