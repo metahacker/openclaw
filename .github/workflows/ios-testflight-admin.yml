@@ -1,0 +1,310 @@
+name: iOS TestFlight Admin
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - pear-ios-hello-testflight
+    paths:
+      - .github/workflows/ios-testflight-admin.yml
+
+permissions:
+  contents: read
+
+jobs:
+  configure-testflight:
+    name: Configure TestFlight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+      INTERNAL_TESTER_EMAIL: alex@metahacking.org
+      INTERNAL_TESTER_FIRST_NAME: Alex
+      INTERNAL_TESTER_LAST_NAME: Markson
+      EXTERNAL_GROUP_NAME: Public Beta
+      PUBLIC_LINK_LIMIT: "100"
+
+    steps:
+      - name: Validate secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in BUNDLE_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required secret/env: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Configure App Store Connect TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const crypto = require("crypto");
+
+          const baseUrl = "https://api.appstoreconnect.apple.com/v1";
+          const required = [
+            "BUNDLE_ID",
+            "ASC_KEY_ID",
+            "ASC_ISSUER_ID",
+            "ASC_KEY_CONTENT",
+            "INTERNAL_TESTER_EMAIL",
+          ];
+
+          for (const name of required) {
+            if (!process.env[name]) throw new Error(`Missing ${name}`);
+          }
+
+          function base64url(value) {
+            return Buffer.from(value)
+              .toString("base64")
+              .replace(/=/g, "")
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_");
+          }
+
+          function keyContent() {
+            const raw = process.env.ASC_KEY_CONTENT.trim();
+            if (raw.includes("BEGIN PRIVATE KEY")) return raw.replace(/\\n/g, "\n");
+            return Buffer.from(raw, "base64").toString("utf8");
+          }
+
+          function makeJwt() {
+            const now = Math.floor(Date.now() / 1000);
+            const header = {
+              alg: "ES256",
+              kid: process.env.ASC_KEY_ID,
+              typ: "JWT",
+            };
+            const payload = {
+              iss: process.env.ASC_ISSUER_ID,
+              iat: now,
+              exp: now + 18 * 60,
+              aud: "appstoreconnect-v1",
+            };
+            const body = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+            const signature = crypto.sign("sha256", Buffer.from(body), {
+              key: keyContent(),
+              dsaEncoding: "ieee-p1363",
+            });
+            return `${body}.${base64url(signature)}`;
+          }
+
+          const token = makeJwt();
+
+          async function request(method, path, body = undefined, options = {}) {
+            const url = path.startsWith("http") ? path : `${baseUrl}${path}`;
+            const response = await fetch(url, {
+              method,
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: body ? JSON.stringify(body) : undefined,
+            });
+
+            const text = await response.text();
+            let json = null;
+            if (text) {
+              try {
+                json = JSON.parse(text);
+              } catch {
+                json = { raw: text };
+              }
+            }
+
+            if (!response.ok) {
+              const message = json?.errors?.map((err) => `${err.status || response.status} ${err.code || ""} ${err.title || ""}: ${err.detail || ""}`).join(" | ") || text || response.statusText;
+              const error = new Error(`${method} ${url} failed: ${message}`);
+              error.status = response.status;
+              error.json = json;
+              if (options.allowFailure) {
+                console.log(`::warning::${error.message}`);
+                return { ok: false, status: response.status, json };
+              }
+              throw error;
+            }
+
+            return { ok: true, status: response.status, json };
+          }
+
+          function query(path, params) {
+            const url = new URL(`${baseUrl}${path}`);
+            for (const [key, value] of Object.entries(params)) {
+              if (value !== undefined && value !== null && value !== "") {
+                url.searchParams.set(key, value);
+              }
+            }
+            return `${url.pathname}${url.search}`;
+          }
+
+          async function first(path, params) {
+            const result = await request("GET", query(path, params));
+            return result.json?.data?.[0] || null;
+          }
+
+          async function all(path, params) {
+            const result = await request("GET", query(path, params));
+            return result.json?.data || [];
+          }
+
+          async function ignoreConflict(promise, label) {
+            try {
+              return await promise;
+            } catch (error) {
+              if (error.status === 409) {
+                console.log(`${label}: already exists or already attached.`);
+                return { ok: false, status: 409, json: error.json };
+              }
+              throw error;
+            }
+          }
+
+          async function ensureUserInvitation(appId) {
+            const email = process.env.INTERNAL_TESTER_EMAIL;
+            const existingUser = await request("GET", query("/users", { "filter[username]": email }), undefined, { allowFailure: true });
+            if (existingUser.ok && existingUser.json?.data?.length) {
+              const user = existingUser.json.data[0];
+              console.log(`Internal tester Apple ID is already an App Store Connect user: ${email} (user ${user.id}).`);
+              return;
+            }
+
+            const existingInvitation = await request("GET", query("/userInvitations", { "filter[email]": email }), undefined, { allowFailure: true });
+            if (existingInvitation.ok && existingInvitation.json?.data?.length) {
+              const invite = existingInvitation.json.data[0];
+              console.log(`Internal tester invitation already exists for ${email} (invitation ${invite.id}).`);
+              return;
+            }
+
+            const payload = {
+              data: {
+                type: "userInvitations",
+                attributes: {
+                  email,
+                  firstName: process.env.INTERNAL_TESTER_FIRST_NAME || "Alex",
+                  lastName: process.env.INTERNAL_TESTER_LAST_NAME || "Markson",
+                  roles: ["DEVELOPER"],
+                  allAppsVisible: false,
+                  provisioningAllowed: false,
+                },
+                relationships: {
+                  visibleApps: {
+                    data: [{ type: "apps", id: appId }],
+                  },
+                },
+              },
+            };
+
+            const result = await ignoreConflict(
+              request("POST", "/userInvitations", payload),
+              `Internal tester invitation for ${email}`,
+            );
+            if (result.ok) {
+              console.log(`Sent App Store Connect invitation to ${email} scoped to app ${appId}.`);
+            }
+          }
+
+          async function ensureBetaGroup(appId, name) {
+            const groups = await all("/betaGroups", {
+              "filter[app]": appId,
+              "filter[name]": name,
+              limit: "10",
+            });
+            const existing = groups.find((group) => group.attributes?.name === name);
+            if (existing) {
+              console.log(`Found beta group "${name}" (${existing.id}). publicLink=${existing.attributes?.publicLink || "not available yet"}`);
+              return existing;
+            }
+
+            const payload = {
+              data: {
+                type: "betaGroups",
+                attributes: { name },
+                relationships: {
+                  app: { data: { type: "apps", id: appId } },
+                },
+              },
+            };
+            const result = await request("POST", "/betaGroups", payload);
+            console.log(`Created beta group "${name}" (${result.json.data.id}).`);
+            return result.json.data;
+          }
+
+          async function attachBuildToGroup(buildId, groupId) {
+            await ignoreConflict(
+              request("POST", `/betaGroups/${groupId}/relationships/builds`, {
+                data: [{ type: "builds", id: buildId }],
+              }),
+              `Build ${buildId} on beta group ${groupId}`,
+            );
+          }
+
+          async function submitBetaReview(buildId) {
+            const payload = {
+              data: {
+                type: "betaAppReviewSubmissions",
+                relationships: {
+                  build: { data: { type: "builds", id: buildId } },
+                },
+              },
+            };
+            const result = await request("POST", "/betaAppReviewSubmissions", payload, { allowFailure: true });
+            if (result.ok) {
+              console.log(`Submitted build ${buildId} for Beta App Review (submission ${result.json.data.id}).`);
+            }
+          }
+
+          async function enablePublicLink(groupId) {
+            const limit = Number.parseInt(process.env.PUBLIC_LINK_LIMIT || "100", 10);
+            const payload = {
+              data: {
+                type: "betaGroups",
+                id: groupId,
+                attributes: {
+                  publicLinkEnabled: true,
+                  publicLinkLimitEnabled: true,
+                  publicLinkLimit: Number.isFinite(limit) ? limit : 100,
+                },
+              },
+            };
+            const result = await request("PATCH", `/betaGroups/${groupId}`, payload, { allowFailure: true });
+            if (result.ok) {
+              const link = result.json.data.attributes?.publicLink;
+              console.log(`Public link ${link ? `enabled: ${link}` : "requested; Apple has not returned a link yet."}`);
+            }
+          }
+
+          async function main() {
+            const app = await first("/apps", { "filter[bundleId]": process.env.BUNDLE_ID, limit: "1" });
+            if (!app) throw new Error(`No App Store Connect app found for bundle id ${process.env.BUNDLE_ID}`);
+            console.log(`App: ${app.attributes?.name || "(unnamed)"} (${app.id}), bundle ${process.env.BUNDLE_ID}`);
+
+            const builds = await all("/builds", {
+              "filter[app]": app.id,
+              "sort": "-uploadedDate",
+              "limit": "10",
+            });
+            if (!builds.length) throw new Error(`No builds found for app ${app.id}.`);
+            const latest = builds[0];
+            console.log(`Latest build: id=${latest.id}, version=${latest.attributes?.version}, processingState=${latest.attributes?.processingState}, uploadedDate=${latest.attributes?.uploadedDate}`);
+
+            await ensureUserInvitation(app.id);
+
+            const externalGroup = await ensureBetaGroup(app.id, process.env.EXTERNAL_GROUP_NAME || "Public Beta");
+            await attachBuildToGroup(latest.id, externalGroup.id);
+            await submitBetaReview(latest.id);
+            await enablePublicLink(externalGroup.id);
+
+            const refreshedGroup = await request("GET", `/betaGroups/${externalGroup.id}`);
+            console.log(`External group summary: name=${refreshedGroup.json.data.attributes?.name}, publicLink=${refreshedGroup.json.data.attributes?.publicLink || "not available yet"}, publicLinkEnabled=${refreshedGroup.json.data.attributes?.publicLinkEnabled}`);
+          }
+
+          main().catch((error) => {
+            console.error(`::error::${error.stack || error.message}`);
+            process.exit(1);
+          });
+          NODE
