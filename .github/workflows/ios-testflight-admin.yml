@@ -26,6 +26,7 @@ jobs:
       INTERNAL_TESTER_LAST_NAME: Markson
       EXTERNAL_GROUP_NAME: Public Beta
       PUBLIC_LINK_LIMIT: "100"
+      BETA_REVIEW_CONTACT_PHONE: ${{ secrets.BETA_REVIEW_CONTACT_PHONE }}
 
     steps:
       - name: Validate secrets
@@ -359,6 +360,7 @@ jobs:
               contactFirstName: "Alex",
               contactLastName: "Markson",
               contactEmail: "alex@metahack.io",
+              ...(process.env.BETA_REVIEW_CONTACT_PHONE ? { contactPhone: process.env.BETA_REVIEW_CONTACT_PHONE } : {}),
               notes: "This is a minimal SwiftUI hello-world build used to validate the OpenClaw iOS TestFlight deployment pipeline. No login is required.",
             };
 
