@@ -235,12 +235,28 @@ jobs:
           }
 
           async function attachBuildToGroup(buildId, groupId) {
-            await ignoreConflict(
+            return await ignoreConflict(
               request("POST", `/betaGroups/${groupId}/relationships/builds`, {
                 data: [{ type: "builds", id: buildId }],
-              }),
+              }, { allowFailure: true }),
               `Build ${buildId} on beta group ${groupId}`,
             );
+          }
+
+          async function markExportCompliance(buildId) {
+            const result = await request("PATCH", `/builds/${buildId}`, {
+              data: {
+                type: "builds",
+                id: buildId,
+                attributes: {
+                  usesNonExemptEncryption: false,
+                },
+              },
+            }, { allowFailure: true });
+
+            if (result.ok) {
+              console.log(`Marked build ${buildId} as not using non-exempt encryption.`);
+            }
           }
 
           async function submitBetaReview(buildId) {
@@ -293,6 +309,7 @@ jobs:
             console.log(`Latest build: id=${latest.id}, version=${latest.attributes?.version}, processingState=${latest.attributes?.processingState}, uploadedDate=${latest.attributes?.uploadedDate}`);
 
             await ensureUserInvitation(app.id);
+            await markExportCompliance(latest.id);
 
             const externalGroup = await ensureBetaGroup(app.id, process.env.EXTERNAL_GROUP_NAME || "Public Beta");
             await attachBuildToGroup(latest.id, externalGroup.id);
