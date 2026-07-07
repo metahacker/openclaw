@@ -1,0 +1,90 @@
+name: iOS Cert Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "list = inventory only; revoke = revoke certs matching name_filter"
+        required: true
+        default: "list"
+      cert_type:
+        description: "Certificate type filter (DEVELOPMENT or IOS_DEVELOPMENT)"
+        required: false
+        default: "DEVELOPMENT"
+      name_filter:
+        description: "Only revoke certs whose displayName contains this substring (required for revoke)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Certificate cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+      ACTION: ${{ inputs.action }}
+      CERT_TYPE: ${{ inputs.cert_type }}
+      NAME_FILTER: ${{ inputs.name_filter }}
+    steps:
+      - name: Install deps
+        run: pip install pyjwt cryptography requests
+
+      - name: Inventory / revoke certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, time, sys
+          import jwt, requests
+
+          raw = os.environ["ASC_KEY_CONTENT"].strip()
+          key = raw.replace("\\n", "\n") if "BEGIN PRIVATE KEY" in raw else base64.b64decode(raw).decode()
+
+          token = jwt.encode(
+              {"iss": os.environ["ASC_ISSUER_ID"], "aud": "appstoreconnect-v1", "exp": int(time.time()) + 600},
+              key, algorithm="ES256", headers={"kid": os.environ["ASC_KEY_ID"]})
+          headers = {"Authorization": f"Bearer {token}"}
+
+          resp = requests.get(
+              "https://api.appstoreconnect.apple.com/v1/certificates",
+              params={"limit": 200}, headers=headers, timeout=30)
+          resp.raise_for_status()
+          certs = resp.json().get("data", [])
+
+          print(f"{len(certs)} certificates on the account:")
+          for cert in certs:
+              attrs = cert.get("attributes", {})
+              print(f"  id={cert['id']} type={attrs.get('certificateType')} "
+                    f"name={attrs.get('displayName')!r} expires={attrs.get('expirationDate')}")
+
+          action = os.environ.get("ACTION", "list")
+          if action != "revoke":
+              print("\nAction=list — inventory only, nothing revoked.")
+              sys.exit(0)
+
+          cert_type = os.environ.get("CERT_TYPE", "DEVELOPMENT")
+          name_filter = os.environ.get("NAME_FILTER", "").strip()
+          if not name_filter:
+              print("::error::revoke requires a non-empty name_filter — refusing to revoke blindly.")
+              sys.exit(1)
+
+          targets = [
+              cert for cert in certs
+              if cert.get("attributes", {}).get("certificateType") == cert_type
+              and name_filter.lower() in str(cert.get("attributes", {}).get("displayName", "")).lower()
+          ]
+          print(f"\nRevoking {len(targets)} {cert_type} certs matching {name_filter!r}:")
+          for cert in targets:
+              attrs = cert.get("attributes", {})
+              del_resp = requests.delete(
+                  f"https://api.appstoreconnect.apple.com/v1/certificates/{cert['id']}",
+                  headers=headers, timeout=30)
+              status = "revoked" if del_resp.status_code == 204 else f"FAILED {del_resp.status_code}: {del_resp.text[:200]}"
+              print(f"  {cert['id']} {attrs.get('displayName')!r} -> {status}")
+          PY
