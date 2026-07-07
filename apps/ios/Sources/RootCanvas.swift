@@ -52,16 +52,12 @@ struct RootCanvas: View {
         hasExistingGatewayConfig: Bool,
         shouldPresentOnLaunch: Bool) -> StartupPresentationRoute
     {
-        if gatewayConnected {
-            return .none
-        }
-        // On first run or explicit launch onboarding state, onboarding always wins.
-        if shouldPresentOnLaunch || !hasConnectedOnce || !onboardingComplete {
+        // PEAR build: the canvas loads the Playground on its own — never block it
+        // with the gateway onboarding wizard on launch. Explicit onboarding requests
+        // (deep links / launch state) still win; gateway setup stays one tap away
+        // behind the gear button.
+        if shouldPresentOnLaunch {
             return .onboarding
-        }
-        // Settings auto-open is a recovery path for previously-connected installs only.
-        if !hasExistingGatewayConfig {
-            return .settings
         }
         return .none
     }

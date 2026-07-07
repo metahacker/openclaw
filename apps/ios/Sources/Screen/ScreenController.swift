@@ -51,9 +51,10 @@ final class ScreenController {
 
         let trimmed = self.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            guard let url = Self.canvasScaffoldURL else { return }
+            // PEAR build: the default canvas is the Playground, served live by the
+            // PEAR instance. The gateway can still repoint it via canvas.navigate.
             self.errorText = nil
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            webView.load(URLRequest(url: Self.pearHomeURL))
             return
         }
 
@@ -208,6 +209,10 @@ final class ScreenController {
         return bundle.url(forResource: name, withExtension: ext, subdirectory: subdirectory)
             ?? bundle.url(forResource: name, withExtension: ext)
     }
+
+    /// PEAR build: default canvas content — the Playground's mobile entry, which
+    /// mints a device session and lands on the unified Playground home.
+    static let pearHomeURL = URL(string: "https://pear.metahack.io/mobile")!
 
     private static let canvasScaffoldURL: URL? = ScreenController.bundledResourceURL(
         name: "scaffold",
