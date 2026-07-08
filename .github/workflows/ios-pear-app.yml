@@ -104,13 +104,20 @@ jobs:
           echo "LocalSigning.xcconfig:"
           cat LocalSigning.xcconfig
 
-      - name: Brand as PEAR
+      - name: Brand as PEAR, trim to phone-only, set versions
         shell: bash
         run: |
           set -euo pipefail
+          # Display name
           sed -i '' 's/CFBundleDisplayName: OpenClaw Share/CFBundleDisplayName: PEAR Share/' project.yml
           sed -i '' 's/CFBundleDisplayName: OpenClaw$/CFBundleDisplayName: PEAR/' project.yml
-          grep -n "CFBundleDisplayName" project.yml
+          # v1 is phone-only: drop the watch app dependency (watchOS profile
+          # materialization is flaky on clean CI runners; watch returns in P1.x).
+          sed -i '' '/- target: OpenClawWatchApp/d' project.yml
+          # TestFlight needs unique, increasing versions; project.yml hardcodes them.
+          sed -i '' "s/CFBundleShortVersionString: \"[^\"]*\"/CFBundleShortVersionString: \"${MARKETING_VERSION}\"/g" project.yml
+          sed -i '' "s/CFBundleVersion: \"[^\"]*\"/CFBundleVersion: \"${BUILD_NUMBER}\"/g" project.yml
+          grep -n "CFBundleDisplayName\|CFBundleVersion\|OpenClawWatchApp" project.yml | head -20
 
       - name: Generate Xcode project
         shell: bash
