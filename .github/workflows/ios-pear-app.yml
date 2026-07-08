@@ -1,0 +1,123 @@
+name: iOS PEAR App
+
+# Builds the REAL OpenClaw node app (apps/ios) as PEAR and ships it to TestFlight.
+# Supersedes the generated-shell lane in ios-hello-testflight.yml.
+
+on:
+  push:
+    branches:
+      - pear-ios-hello-testflight
+    paths:
+      - .github/workflows/ios-pear-app.yml
+      - apps/ios/**
+      - apps/shared/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-pear-app
+  cancel-in-progress: true
+
+jobs:
+  build-upload:
+    name: Build and Upload PEAR app
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+      TEAM_ID: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+      MARKETING_VERSION: "2026.7.7"
+      BUILD_NUMBER: ${{ github.run_number }}
+    defaults:
+      run:
+        working-directory: apps/ios
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Validate secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in BUNDLE_ID TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required secret/env: ${name}"
+              exit 1
+            fi
+          done
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Available Xcodes:"; ls -d /Applications/Xcode*.app 2>/dev/null || true
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -z "${XC}" ]]; then
+            XC="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -1 || true)"
+          fi
+          if [[ -z "${XC}" ]]; then
+            XC="/Applications/Xcode.app"
+          fi
+          echo "Selecting ${XC}"
+          sudo xcode-select -s "${XC}"
+          xcodebuild -version
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen swiftlint swiftformat
+          gem install fastlane --no-document
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-pear-ios-${{ hashFiles('apps/ios/project.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-pear-ios-
+
+      - name: Configure signing and versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > LocalSigning.xcconfig <<EOF
+          OPENCLAW_CODE_SIGN_STYLE = Automatic
+          OPENCLAW_DEVELOPMENT_TEAM = ${TEAM_ID}
+          OPENCLAW_APP_BUNDLE_ID = ${BUNDLE_ID}
+          OPENCLAW_SHARE_BUNDLE_ID = ${BUNDLE_ID}.share
+          OPENCLAW_WATCH_APP_BUNDLE_ID = ${BUNDLE_ID}.watchkitapp
+          OPENCLAW_WATCH_EXTENSION_BUNDLE_ID = ${BUNDLE_ID}.watchkitapp.extension
+          OPENCLAW_APP_PROFILE =
+          OPENCLAW_SHARE_PROFILE =
+          MARKETING_VERSION = ${MARKETING_VERSION}
+          CURRENT_PROJECT_VERSION = ${BUILD_NUMBER}
+          EOF
+          echo "LocalSigning.xcconfig:"
+          cat LocalSigning.xcconfig
+
+      - name: Brand as PEAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '' 's/CFBundleDisplayName: OpenClaw Share/CFBundleDisplayName: PEAR Share/' project.yml
+          sed -i '' 's/CFBundleDisplayName: OpenClaw$/CFBundleDisplayName: PEAR/' project.yml
+          grep -n "CFBundleDisplayName" project.yml
+
+      - name: Generate Xcode project
+        shell: bash
+        run: xcodegen generate
+
+      - name: Build and upload to TestFlight
+        shell: bash
+        env:
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        run: fastlane beta
