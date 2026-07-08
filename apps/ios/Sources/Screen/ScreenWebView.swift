@@ -1,5 +1,6 @@
 import OpenClawKit
 import SwiftUI
+import UIKit
 import WebKit
 
 struct ScreenWebView: UIViewRepresentable {
@@ -144,6 +145,15 @@ private final class ScreenNavigationDelegate: NSObject, WKNavigationDelegate {
         if url.scheme?.lowercased() == "openclaw" {
             decisionHandler(.cancel)
             self.controller?.onDeepLink?(url)
+            return
+        }
+
+        // PEAR build: the connect page must open in the system browser — the
+        // canvas WebView has no Playground session cookie, Safari does. Safari
+        // then hands the device key back via openclaw://playground?k=…
+        if url.host?.lowercased() == "pear.metahack.io", url.path == "/connect/app" {
+            decisionHandler(.cancel)
+            UIApplication.shared.open(url)
             return
         }
 

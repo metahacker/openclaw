@@ -2550,6 +2550,14 @@ extension NodeAppModel {
     }
 
     func handleDeepLink(url: URL) async {
+        // PEAR build: openclaw://playground?k=<device-key> — the connect page in
+        // Safari hands the device key back to the app, and the canvas exchanges
+        // it for a Playground session. Kept app-local rather than in
+        // DeepLinkParser because the route is PEAR-specific, not upstream.
+        if url.scheme?.lowercased() == "openclaw", url.host?.lowercased() == "playground" {
+            self.handlePlaygroundConnectDeepLink(url: url)
+            return
+        }
         guard let route = DeepLinkParser.parse(url) else { return }
 
         switch route {
@@ -2558,6 +2566,26 @@ extension NodeAppModel {
         case .gateway:
             break
         }
+    }
+
+    private func handlePlaygroundConnectDeepLink(url: URL) {
+        let comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let key = comps?.queryItems?
+            .first(where: { $0.name == "k" })?.value?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !key.isEmpty, key.count <= 128, key.allSatisfy(\.isHexDigit) else {
+            self.deepLinkLogger.error("playground deep link rejected: missing or malformed key")
+            self.screen.errorText = "Connect link was missing a valid device key."
+            return
+        }
+        var auth = URLComponents(string: "https://pear.metahack.io/auth/device")!
+        auth.queryItems = [
+            URLQueryItem(name: "k", value: key),
+            URLQueryItem(name: "return", value: "/"),
+        ]
+        guard let target = auth.url else { return }
+        self.deepLinkLogger.info("playground deep link accepted — exchanging device key for session")
+        self.screen.navigate(to: target.absoluteString)
     }
 
     private func handleAgentDeepLink(_ link: AgentDeepLink, originalURL: URL) async {
