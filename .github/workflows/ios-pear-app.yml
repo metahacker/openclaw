@@ -116,6 +116,14 @@ jobs:
         shell: bash
         run: xcodegen generate
 
+      - name: Prepare provisioning profile directories
+        shell: bash
+        run: |
+          # Fresh runners lack these; automatic signing then fails with
+          # "Build input file cannot be found: ....mobileprovision".
+          mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+
       - name: Prepare App Store Connect key
         shell: bash
         run: |
