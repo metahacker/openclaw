@@ -92,7 +92,10 @@ platform :ios do
       export_method: "app-store",
       clean: true,
       xcargs: "DEVELOPMENT_TEAM=#{team_id} -allowProvisioningUpdates#{auth_args}",
-      export_xcargs: "-allowProvisioningUpdates#{auth_args}",
+      # No auth_args here: gym injects the lane's api_key into -exportArchive
+      # itself; duplicating gives "option '-authenticationKeyPath' may only be
+      # provided once".
+      export_xcargs: "-allowProvisioningUpdates",
       export_options: {
         signingStyle: "automatic"
       }
