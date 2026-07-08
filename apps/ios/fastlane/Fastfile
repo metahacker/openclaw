@@ -96,6 +96,10 @@ platform :ios do
       scheme: "OpenClaw",
       export_method: "app-store",
       clean: true,
+      # Without this, gym injects the archive's *Development* profiles into
+      # ExportOptions' provisioningProfiles map, forcing manual resolution and
+      # breaking automatic app-store export ("requires a provisioning profile").
+      skip_profile_detection: true,
       xcargs: "DEVELOPMENT_TEAM=#{team_id} -allowProvisioningUpdates#{auth_args}#{extra_xcargs}",
       # No auth_args here: gym injects the lane's api_key into -exportArchive
       # itself; duplicating gives "option '-authenticationKeyPath' may only be
