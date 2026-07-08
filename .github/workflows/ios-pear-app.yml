@@ -126,6 +126,11 @@ jobs:
           <dict/>
           </plist>
           EOF
+          # Feb-marathon lesson, relearned: a pinned CODE_SIGN_IDENTITY forces
+          # every ephemeral runner to mint a fresh Development cert until the
+          # account hits Apple's cert cap. Removing it lets cloud signing
+          # reuse managed certificates.
+          sed -i '' '/^CODE_SIGN_IDENTITY/d' Config/Signing.xcconfig
           # TestFlight needs unique, increasing versions; project.yml hardcodes them.
           sed -i '' "s/CFBundleShortVersionString: \"[^\"]*\"/CFBundleShortVersionString: \"${MARKETING_VERSION}\"/g" project.yml
           sed -i '' "s/CFBundleVersion: \"[^\"]*\"/CFBundleVersion: \"${BUILD_NUMBER}\"/g" project.yml
