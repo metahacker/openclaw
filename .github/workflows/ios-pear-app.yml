@@ -135,6 +135,14 @@ jobs:
         shell: bash
         run: xcodegen generate
 
+      - name: Debug resolved signing settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la LocalSigning.xcconfig .local-signing.xcconfig 2>/dev/null || true
+          xcodebuild -showBuildSettings -project OpenClaw.xcodeproj -scheme OpenClaw 2>/dev/null \
+            | grep -E "PRODUCT_BUNDLE_IDENTIFIER|OPENCLAW_APP_BUNDLE_ID|MARKETING_VERSION|CURRENT_PROJECT_VERSION|DEVELOPMENT_TEAM" | head -10 || true
+
       - name: Prepare provisioning profile directories
         shell: bash
         run: |
@@ -166,4 +174,5 @@ jobs:
         env:
           IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
           ASC_KEY_PATH: ${{ env.ASC_KEY_PATH }}
+          OPENCLAW_XCARGS_EXTRA: "PRODUCT_BUNDLE_IDENTIFIER=${{ secrets.IOS_BUNDLE_ID }} MARKETING_VERSION=2026.7.7 CURRENT_PROJECT_VERSION=${{ github.run_number }}"
         run: fastlane beta

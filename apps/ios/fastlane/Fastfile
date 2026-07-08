@@ -86,12 +86,17 @@ platform :ios do
                   " -authenticationKeyIssuerID #{issuer_id.shellescape}"
     end
 
+    # Optional extra build settings from CI (e.g. PRODUCT_BUNDLE_IDENTIFIER
+    # override when xcconfig seams don't reach the resolved settings).
+    extra_xcargs = ENV["OPENCLAW_XCARGS_EXTRA"].to_s.strip
+    extra_xcargs = " #{extra_xcargs}" unless extra_xcargs.empty?
+
     build_app(
       project: "OpenClaw.xcodeproj",
       scheme: "OpenClaw",
       export_method: "app-store",
       clean: true,
-      xcargs: "DEVELOPMENT_TEAM=#{team_id} -allowProvisioningUpdates#{auth_args}",
+      xcargs: "DEVELOPMENT_TEAM=#{team_id} -allowProvisioningUpdates#{auth_args}#{extra_xcargs}",
       # No auth_args here: gym injects the lane's api_key into -exportArchive
       # itself; duplicating gives "option '-authenticationKeyPath' may only be
       # provided once".
