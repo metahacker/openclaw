@@ -175,4 +175,6 @@ jobs:
           IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
           ASC_KEY_PATH: ${{ env.ASC_KEY_PATH }}
           OPENCLAW_XCARGS_EXTRA: "PRODUCT_BUNDLE_IDENTIFIER=${{ secrets.IOS_BUNDLE_ID }} MARKETING_VERSION=2026.7.7 CURRENT_PROJECT_VERSION=${{ github.run_number }}"
+          # pilot reads the Appfile's upstream app_identifier otherwise.
+          PILOT_APP_IDENTIFIER: ${{ secrets.IOS_BUNDLE_ID }}
         run: fastlane beta
