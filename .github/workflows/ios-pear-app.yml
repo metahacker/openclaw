@@ -111,9 +111,21 @@ jobs:
           # Display name
           sed -i '' 's/CFBundleDisplayName: OpenClaw Share/CFBundleDisplayName: PEAR Share/' project.yml
           sed -i '' 's/CFBundleDisplayName: OpenClaw$/CFBundleDisplayName: PEAR/' project.yml
-          # v1 is phone-only: drop the watch app dependency (watchOS profile
-          # materialization is flaky on clean CI runners; watch returns in P1.x).
+          # v1 is the bare phone app: drop watch (watchOS profile materialization
+          # is flaky on clean CI runners) and the share extension (needs its own
+          # App ID + distribution profile). Both return in P1.x.
           sed -i '' '/- target: OpenClawWatchApp/d' project.yml
+          sed -i '' '/- target: OpenClawShareExtension/{N;d;}' project.yml
+          # No push in v1 (the hosted push relay only accepts official OpenClaw
+          # builds) — an empty entitlements file avoids needing the Push
+          # Notifications capability on the App ID at export time.
+          cat > Sources/OpenClaw.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict/>
+          </plist>
+          EOF
           # TestFlight needs unique, increasing versions; project.yml hardcodes them.
           sed -i '' "s/CFBundleShortVersionString: \"[^\"]*\"/CFBundleShortVersionString: \"${MARKETING_VERSION}\"/g" project.yml
           sed -i '' "s/CFBundleVersion: \"[^\"]*\"/CFBundleVersion: \"${BUILD_NUMBER}\"/g" project.yml
