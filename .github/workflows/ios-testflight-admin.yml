@@ -15,6 +15,10 @@ on:
         description: "Only revoke certs whose displayName contains this substring (required for revoke)"
         required: false
         default: ""
+      new_app_name:
+        description: "Rename the App Store Connect app (App Information > Name) to this value"
+        required: false
+        default: ""
   push:
     branches:
       - pear-ios-hello-testflight
@@ -97,7 +101,7 @@ jobs:
 
   configure-testflight:
     name: Configure TestFlight
-    if: github.event_name == 'push' || inputs.cert_action == ''
+    if: github.event_name == 'push' || (inputs.cert_action == '' && inputs.new_app_name == '')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -661,3 +665,81 @@ jobs:
             process.exit(1);
           });
           NODE
+
+  rename-app:
+    name: Rename App Store Connect app
+    if: github.event_name == 'workflow_dispatch' && inputs.new_app_name != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+      NEW_APP_NAME: ${{ inputs.new_app_name }}
+    steps:
+      - name: Install deps
+        run: pip install pyjwt cryptography requests
+
+      - name: Rename app in App Store Connect
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, os, time, sys
+          import jwt, requests
+
+          raw = os.environ["ASC_KEY_CONTENT"].strip()
+          key = raw.replace("\\n", "\n") if "BEGIN PRIVATE KEY" in raw else base64.b64decode(raw).decode()
+
+          token = jwt.encode(
+              {"iss": os.environ["ASC_ISSUER_ID"], "aud": "appstoreconnect-v1", "exp": int(time.time()) + 600},
+              key, algorithm="ES256", headers={"kid": os.environ["ASC_KEY_ID"]})
+          headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+          api = "https://api.appstoreconnect.apple.com/v1"
+
+          new_name = os.environ["NEW_APP_NAME"].strip()
+
+          resp = requests.get(f"{api}/apps",
+                              params={"filter[bundleId]": os.environ["BUNDLE_ID"]},
+                              headers=headers, timeout=30)
+          resp.raise_for_status()
+          apps = resp.json()["data"]
+          if not apps:
+              print(f"::error::No app found for bundle id {os.environ['BUNDLE_ID']}")
+              sys.exit(1)
+          app = apps[0]
+          print(f"App {app['id']} current name: {app['attributes'].get('name')!r}")
+
+          resp = requests.get(f"{api}/apps/{app['id']}/appInfos", headers=headers, timeout=30)
+          resp.raise_for_status()
+          infos = resp.json()["data"]
+          # An app carries one editable appInfo pre-release; released apps gain a
+          # read-only READY_FOR_SALE copy — patch the editable one.
+          editable = {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED",
+                      "METADATA_REJECTED", "WAITING_FOR_REVIEW", "IN_REVIEW"}
+          info = next((i for i in infos
+                       if i["attributes"].get("appStoreState") in editable), infos[0])
+
+          resp = requests.get(f"{api}/appInfos/{info['id']}/appInfoLocalizations",
+                              headers=headers, timeout=30)
+          resp.raise_for_status()
+          locs = resp.json()["data"]
+          if not locs:
+              print("::error::No appInfoLocalizations found")
+              sys.exit(1)
+          ok = True
+          for loc in locs:
+              locale = loc["attributes"].get("locale")
+              old = loc["attributes"].get("name")
+              patch = {"data": {"type": "appInfoLocalizations", "id": loc["id"],
+                                "attributes": {"name": new_name}}}
+              r = requests.patch(f"{api}/appInfoLocalizations/{loc['id']}",
+                                 json=patch, headers=headers, timeout=30)
+              if r.status_code == 200:
+                  print(f"{locale}: {old!r} -> {new_name!r} OK")
+              else:
+                  ok = False
+                  print(f"::error::{locale}: rename failed {r.status_code}: {r.text[:500]}")
+          sys.exit(0 if ok else 1)
+          PY
