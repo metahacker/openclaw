@@ -97,7 +97,8 @@ platform :ios do
       # provided once".
       export_xcargs: "-allowProvisioningUpdates",
       export_options: {
-        signingStyle: "automatic"
+        signingStyle: "automatic",
+        teamID: team_id
       }
     )
 
