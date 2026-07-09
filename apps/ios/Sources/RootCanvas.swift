@@ -83,6 +83,9 @@ struct RootCanvas: View {
                 CameraFlashOverlay(nonce: self.appModel.cameraFlashNonce)
             }
         }
+        .ignoresSafeArea()
+        .persistentSystemOverlays(.hidden)
+        .statusBarHidden(true)
         .gatewayTrustPromptAlert()
         .deepLinkAgentPromptAlert()
         .sheet(item: self.$presentedSheet) { sheet in

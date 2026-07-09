@@ -105,6 +105,8 @@ targets:
           - remote-notification
         BGTaskSchedulerPermittedIdentifiers:
           - ai.openclaw.ios.bgrefresh
+        UIStatusBarHidden: true
+        UIViewControllerBasedStatusBarAppearance: true
         NSLocalNetworkUsageDescription: OpenClaw discovers and connects to your OpenClaw gateway on the local network.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoadsInWebContent: true
