@@ -31,7 +31,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-      MARKETING_VERSION: "2026.7.9"
+      MARKETING_VERSION: "2026.7.11"
       BUILD_NUMBER: ${{ github.run_number }}
     defaults:
       run:
@@ -104,14 +104,14 @@ jobs:
           echo "LocalSigning.xcconfig:"
           cat LocalSigning.xcconfig
 
-      - name: Brand as PEAR, trim to phone-only, set versions
+      - name: Brand as PEAR, trim optional targets, set versions
         shell: bash
         run: |
           set -euo pipefail
           # Display name
           sed -i '' 's/CFBundleDisplayName: OpenClaw Share/CFBundleDisplayName: PEAR Share/' project.yml
           sed -i '' 's/CFBundleDisplayName: OpenClaw$/CFBundleDisplayName: PEAR/' project.yml
-          # v1 is the bare phone app: drop watch (watchOS profile materialization
+          # v1 is the iPhone + iPad app: drop watch (watchOS profile materialization
           # is flaky on clean CI runners) and the share extension (needs its own
           # App ID + distribution profile). Both return in P1.x.
           sed -i '' '/- target: OpenClawWatchApp/d' project.yml
@@ -135,6 +135,39 @@ jobs:
           sed -i '' "s/CFBundleShortVersionString: \"[^\"]*\"/CFBundleShortVersionString: \"${MARKETING_VERSION}\"/g" project.yml
           sed -i '' "s/CFBundleVersion: \"[^\"]*\"/CFBundleVersion: \"${BUILD_NUMBER}\"/g" project.yml
           grep -n "CFBundleDisplayName\|CFBundleVersion\|OpenClawWatchApp" project.yml | head -20
+
+      - name: Verify iPad support and PEAR icon catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import struct
+
+          project = pathlib.Path("project.yml").read_text()
+          if 'TARGETED_DEVICE_FAMILY: "1,2"' not in project:
+              raise SystemExit("iPad support missing: TARGETED_DEVICE_FAMILY must be 1,2")
+
+          catalog = pathlib.Path("Sources/Assets.xcassets/AppIcon.appiconset")
+          contents = json.loads((catalog / "Contents.json").read_text())
+          required = {"76.png": 76, "152.png": 152, "167.png": 167, "1024.png": 1024}
+          ipad_files = {image.get("filename") for image in contents["images"] if image.get("idiom") == "ipad"}
+          if not {"76.png", "152.png", "167.png"}.issubset(ipad_files):
+              raise SystemExit(f"iPad icon catalog incomplete: {sorted(ipad_files)}")
+
+          for filename, expected in required.items():
+              data = (catalog / filename).read_bytes()
+              if data[:8] != b"\x89PNG\r\n\x1a\n":
+                  raise SystemExit(f"{filename} is not a PNG")
+              width, height, _depth, color_type = struct.unpack(">IIBB", data[16:26])
+              if (width, height) != (expected, expected):
+                  raise SystemExit(f"{filename} is {width}x{height}, expected {expected}x{expected}")
+              if color_type in {4, 6}:
+                  raise SystemExit(f"{filename} has an alpha channel")
+
+          print("Verified iPhone+iPad target and opaque PEAR icon catalog")
+          PY
 
       - name: Generate Xcode project
         shell: bash
