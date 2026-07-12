@@ -148,6 +148,9 @@ jobs:
           project = pathlib.Path("project.yml").read_text()
           if 'TARGETED_DEVICE_FAMILY: "1,2"' not in project:
               raise SystemExit("iPad support missing: TARGETED_DEVICE_FAMILY must be 1,2")
+          for usage_key in ("NSPhotoLibraryUsageDescription", "NSMotionUsageDescription"):
+              if usage_key not in project:
+                  raise SystemExit(f"required privacy purpose string missing: {usage_key}")
 
           catalog = pathlib.Path("Sources/Assets.xcassets/AppIcon.appiconset")
           contents = json.loads((catalog / "Contents.json").read_text())

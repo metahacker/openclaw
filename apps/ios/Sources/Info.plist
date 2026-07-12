@@ -44,6 +44,10 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>OpenClaw can capture photos or short video clips when requested via the gateway.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>PEAR uses photo library access only when you choose an image to share in a conversation or save an image from PEAR.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>PEAR uses motion data for device-aware features only when you enable or request them.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>OpenClaw discovers and connects to your OpenClaw gateway on the local network.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

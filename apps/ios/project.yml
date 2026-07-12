@@ -113,6 +113,8 @@ targets:
         NSBonjourServices:
           - _openclaw-gw._tcp
         NSCameraUsageDescription: OpenClaw can capture photos or short video clips when requested via the gateway.
+        NSPhotoLibraryUsageDescription: PEAR uses photo library access only when you choose an image to share in a conversation or save an image from PEAR.
+        NSMotionUsageDescription: PEAR uses motion data for device-aware features only when you enable or request them.
         NSLocationWhenInUseUsageDescription: OpenClaw uses your location when you allow location sharing.
         NSLocationAlwaysAndWhenInUseUsageDescription: OpenClaw can share your location in the background when you enable Always.
         NSMicrophoneUsageDescription: OpenClaw needs microphone access for voice wake.
