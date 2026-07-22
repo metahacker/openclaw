@@ -2586,8 +2586,17 @@ extension NodeAppModel {
             return
         }
         // The native shell calls the pear-mobile APIs with this key directly;
-        // the WebView still exchanges it for its own session cookie below.
+        // it also exchanges the key for a durable Playground session cookie so
+        // authenticated native APIs survive app relaunches.
         PearDeviceKeyStore.save(key)
+        Task { @MainActor in
+            do {
+                _ = try await PearSessionExchange.exchangeDeviceKeyAndSave(key)
+            } catch {
+                self.deepLinkLogger.error(
+                    "playground session exchange failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         var auth = URLComponents(string: "https://pear.metahack.io/auth/device")!
         auth.queryItems = [
             URLQueryItem(name: "k", value: key),

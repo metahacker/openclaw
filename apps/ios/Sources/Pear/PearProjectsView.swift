@@ -78,6 +78,9 @@ struct PearProjectDetailView: View {
     var store: PearStore
     let project: PearStatusData.Project
     @Environment(\.openURL) private var openURL
+    @State private var wiki: PearProjectSites?
+    @State private var isLoadingWiki = false
+    @State private var wikiError: String?
 
     var body: some View {
         ScrollView {
@@ -91,9 +94,24 @@ struct PearProjectDetailView: View {
                     }
                 }
 
-                if !self.pagesHere.isEmpty {
+                if !self.wikiSections.isEmpty {
+                    PearDayMark(label: "Pages")
+                    ForEach(self.wikiSections) { section in
+                        PearSiteBox(title: section.title, subtitle: section.subtitle, cards: section.cards)
+                    }
+                } else if !self.pagesHere.isEmpty {
                     PearDayMark(label: "Pages")
                     PearSiteBox(title: "📖 Project wiki", subtitle: "What we put down here", cards: self.pagesHere)
+                } else if self.isLoadingWiki {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 24)
+                } else if let wikiError {
+                    Text(wikiError)
+                        .font(PearTheme.truthLine)
+                        .foregroundStyle(PearTheme.faint)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 18)
                 }
 
                 Button {
@@ -120,6 +138,8 @@ struct PearProjectDetailView: View {
         .background(PearTheme.cream)
         .scrollIndicators(.hidden)
         .navigationBarTitleDisplayMode(.inline)
+        .task { await self.loadWiki() }
+        .refreshable { await self.loadWiki(force: true) }
     }
 
     private var hero: some View {
@@ -157,10 +177,66 @@ struct PearProjectDetailView: View {
         self.store.daySections.flatMap(\.cards).filter { $0.tag == self.project.hashtag }
     }
 
+    private var wikiSections: [PearProjectWikiSection] {
+        guard let wiki else { return [] }
+        var sections: [PearProjectWikiSection] = []
+        for site in wiki.sites ?? [] {
+            let cards = (site.pages ?? []).compactMap { self.card(from: $0) }
+            guard !cards.isEmpty else { continue }
+            sections.append(PearProjectWikiSection(
+                id: "site:\(site.id)",
+                title: "📖 \(site.title ?? site.slug ?? "Project wiki")",
+                subtitle: site.summary ?? "What we put down here",
+                cards: cards))
+        }
+        let siteless = (wiki.siteless ?? []).compactMap { self.card(from: $0) }
+        if !siteless.isEmpty {
+            sections.append(PearProjectWikiSection(
+                id: "siteless",
+                title: "📄 Pages",
+                subtitle: "Loose notes and artifacts",
+                cards: siteless))
+        }
+        return sections
+    }
+
     private var projectURL: URL {
         let slug = self.project.slug ?? String(self.project.id)
         return URL(string: "https://pear.metahack.io/projects/\(slug)") ?? PearAPI.baseURL
     }
+
+    private func card(from page: PearProjectSites.Page) -> PearStore.StreamCard? {
+        guard let title = page.title, !title.isEmpty else { return nil }
+        return PearStore.StreamCard(
+            emoji: "📄",
+            title: title,
+            summary: page.bestSummary,
+            tag: self.project.hashtag,
+            kind: page.kind,
+            url: page.bestURL.flatMap(PearAPI.absoluteURL(_:)),
+            pinned: page.isPinned ?? false)
+    }
+
+    @MainActor
+    private func loadWiki(force: Bool = false) async {
+        if self.isLoadingWiki { return }
+        if self.wiki != nil, !force { return }
+        self.isLoadingWiki = true
+        defer { self.isLoadingWiki = false }
+        do {
+            self.wiki = try await PearAPI.current.projectSites(project: self.project)
+            self.wikiError = nil
+        } catch {
+            self.wikiError = "couldn't load project wiki"
+        }
+    }
+}
+
+private struct PearProjectWikiSection: Identifiable {
+    var id: String
+    var title: String
+    var subtitle: String
+    var cards: [PearStore.StreamCard]
 }
 
 /// Prototype `.sitebox`: a site section with page rows.

@@ -4,6 +4,7 @@ import SwiftUI
 /// chat, settings, and the honest state of both connections.
 struct PearBackstageView: View {
     var store: PearStore
+    var authModel: PearAuthModel
     var openClassicCanvas: () -> Void
     var openNodeChat: () -> Void
 
@@ -44,9 +45,9 @@ struct PearBackstageView: View {
 
                     PearDayMark(label: "State")
                     PearStateRow(
-                        label: "Playground",
-                        value: self.store.hasDeviceKey ? "linked" : "not linked",
-                        healthy: self.store.hasDeviceKey)
+                        label: "Google",
+                        value: self.authModel.statusText,
+                        healthy: self.store.hasPlaygroundSession)
                     PearStateRow(
                         label: "Gateway",
                         value: self.appModel.gatewayServerName ?? "not connected",
@@ -55,6 +56,13 @@ struct PearBackstageView: View {
                         label: "Home stream",
                         value: self.store.feedSource == .homeFeed ? "live feed" : "projects fallback",
                         healthy: self.store.feedSource == .homeFeed)
+                    if self.store.hasPlaygroundSession {
+                        PearBackstageRow(
+                            emoji: "🔑",
+                            title: "Forget Playground session",
+                            subtitle: "Keep the legacy device key, but require Google again for private data.",
+                            action: self.authModel.signOutSessionOnly)
+                    }
 
                     if let summary = self.store.briefingSummary {
                         PearDayMark(label: "This morning")

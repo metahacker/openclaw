@@ -1,10 +1,10 @@
 import SwiftUI
-import UIKit
 
 /// Home — "What we're working on": the conversations in motion, then the
 /// day-grouped stream of real work, newest first. Machinery lives one layer back.
 struct PearHomeView: View {
     var store: PearStore
+    var authModel: PearAuthModel
     var openChats: () -> Void
 
     var body: some View {
@@ -13,8 +13,8 @@ struct PearHomeView: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     self.header
 
-                    if !self.store.hasDeviceKey {
-                        PearConnectCard()
+                    if !self.store.hasPlaygroundSession {
+                        PearConnectCard(authModel: self.authModel)
                     }
 
                     if !self.store.inMotion.isEmpty {
@@ -199,28 +199,33 @@ struct PearPressableStyle: ButtonStyle {
 
 /// Shown until the Safari handoff has linked this device.
 struct PearConnectCard: View {
+    var authModel: PearAuthModel
+
     var body: some View {
         Button {
-            // Same handoff the classic canvas uses: Safari holds the Playground
-            // session and deep-links the device key back into the app.
-            UIApplication.shared.open(URL(string: "https://pear.metahack.io/connect/app")!)
+            Task { await self.authModel.signIn() }
         } label: {
             HStack(spacing: 13) {
                 Text("🍐")
                     .font(.system(size: 26))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Link this device")
+                    Text(self.title)
                         .font(PearTheme.rowTitle)
                         .foregroundStyle(PearTheme.ink)
-                    Text("One tap in Safari brings your whole world in — the stream, chats, and projects.")
+                    Text(self.subtitle)
                         .font(.system(size: 13))
                         .foregroundStyle(PearTheme.walnut)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(PearTheme.pear)
+                if self.authModel.isWorking {
+                    ProgressView()
+                        .tint(PearTheme.pear)
+                } else {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(PearTheme.pear)
+                }
             }
             .padding(15)
             .background {
@@ -233,6 +238,33 @@ struct PearConnectCard: View {
             }
         }
         .buttonStyle(PearPressableStyle())
+        .disabled(self.authModel.isWorking)
         .padding(.vertical, 6)
+    }
+
+    private var title: String {
+        switch self.authModel.phase {
+        case .failed:
+            "Sign in again"
+        case .restoring:
+            "Restoring your session"
+        case .signingIn:
+            "Finish Google sign-in"
+        default:
+            "Sign in with Google"
+        }
+    }
+
+    private var subtitle: String {
+        switch self.authModel.phase {
+        case let .failed(reason):
+            "\(reason) Tap to retry."
+        case .restoring:
+            "Turning the saved device link into a real Playground session."
+        case .signingIn:
+            "Use Google once; PEAR will keep the Playground session on this phone."
+        default:
+            "Use Google once to unlock the private stream, chats, and project wiki homes."
+        }
     }
 }

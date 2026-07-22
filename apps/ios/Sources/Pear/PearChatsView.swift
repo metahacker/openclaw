@@ -16,7 +16,7 @@ struct PearChatsView: View {
                         .padding(.bottom, 6)
 
                     NavigationLink {
-                        PearConversationView(chatModel: self.chatModel)
+                        PearConversationView(chatModel: self.chatModel, title: "PEAR")
                     } label: {
                         PearThreadRow(
                             emoji: "🍐",
@@ -27,11 +27,31 @@ struct PearChatsView: View {
                     }
                     .buttonStyle(PearPressableStyle())
 
+                    if !self.store.conversations.isEmpty {
+                        PearDayMark(label: "Recent")
+                        ForEach(self.store.conversations) { conversation in
+                            NavigationLink {
+                                PearConversationScreen(conversation: conversation)
+                            } label: {
+                                PearThreadRow(
+                                    emoji: conversation.bestEmoji,
+                                    title: conversation.bestTitle,
+                                    status: conversation.bestStatus,
+                                    tag: conversation.bestTag,
+                                    live: conversation.activityActive == true)
+                            }
+                            .buttonStyle(PearPressableStyle())
+                        }
+                    }
+
                     if !self.store.inMotion.isEmpty {
                         PearDayMark(label: "In motion")
                         ForEach(self.store.inMotion) { motion in
                             NavigationLink {
-                                PearConversationView(chatModel: self.chatModel, contextTitle: motion.title)
+                                PearConversationView(
+                                    chatModel: self.chatModel,
+                                    title: "PEAR",
+                                    contextTitle: motion.title)
                             } label: {
                                 PearThreadRow(
                                     emoji: motion.emoji,
@@ -60,6 +80,20 @@ struct PearChatsView: View {
             return last.text
         }
         return "here with you"
+    }
+}
+
+private struct PearConversationScreen: View {
+    let conversation: PearConversationSummary
+    @State private var chatModel: PearChatModel
+
+    init(conversation: PearConversationSummary) {
+        self.conversation = conversation
+        _chatModel = State(initialValue: PearChatModel(page: conversation.page ?? "/apps/pear-mobile"))
+    }
+
+    var body: some View {
+        PearConversationView(chatModel: self.chatModel, title: self.conversation.bestTitle)
     }
 }
 
@@ -107,6 +141,7 @@ struct PearThreadRow: View {
 /// paper, no borders, no avatars — with the Field and its truth line beneath.
 struct PearConversationView: View {
     @Bindable var chatModel: PearChatModel
+    var title: String
     var contextTitle: String?
 
     var body: some View {
@@ -153,14 +188,15 @@ struct PearConversationView: View {
             PearFieldComposer(chatModel: self.chatModel)
         }
         .background(PearTheme.cream)
-        .navigationTitle("PEAR")
+        .navigationTitle(self.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
-                    Text("PEAR")
+                    Text(self.title)
                         .font(.system(size: 17, weight: .semibold, design: .serif))
                         .foregroundStyle(PearTheme.ink)
+                        .lineLimit(1)
                     PearPresenceDot(size: 6)
                 }
             }

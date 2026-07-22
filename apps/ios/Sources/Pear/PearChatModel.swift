@@ -19,7 +19,12 @@ final class PearChatModel {
     private(set) var historyError: String?
     var draft: String = ""
 
+    private let page: String
     private var pollTask: Task<Void, Never>?
+
+    init(page: String = "/apps/pear-mobile") {
+        self.page = page
+    }
 
     var truthLine: String {
         switch self.sendState {
@@ -35,7 +40,7 @@ final class PearChatModel {
     }
 
     private var api: PearAPI {
-        PearAPI(deviceKey: PearDeviceKeyStore.load())
+        PearAPI.current
     }
 
     // MARK: - History
@@ -60,7 +65,7 @@ final class PearChatModel {
         self.isLoadingHistory = true
         defer { self.isLoadingHistory = false }
         do {
-            let fetched = try await self.api.chatHistory()
+            let fetched = try await self.api.chatHistory(page: self.page)
             if fetched != self.messages {
                 self.messages = fetched
             }
@@ -84,7 +89,7 @@ final class PearChatModel {
         self.sendState = .sending
         self.draft = ""
         do {
-            let response = try await self.api.sendChat(message: text)
+            let response = try await self.api.sendChat(message: text, page: self.page)
             if response.ok == true {
                 self.sendState = .delivered(Date())
             } else {

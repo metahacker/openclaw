@@ -47,14 +47,17 @@ final class PearStore {
     private(set) var projects: [PearStatusData.Project] = []
     private(set) var onDeckProjects: [PearStatusData.Project] = []
     private(set) var apps: [PearAppsRegistry.Entry] = []
+    private(set) var conversations: [PearConversationSummary] = []
     private(set) var briefingSummary: String?
     private(set) var feedSource: FeedSource = .fallback
     private(set) var isLoading = false
     private(set) var lastError: String?
     private(set) var lastRefreshed: Date?
     private(set) var hasDeviceKey: Bool = PearDeviceKeyStore.load() != nil
+    private(set) var hasPlaygroundSession: Bool = PearSessionStore.load() != nil
 
     private var keyObserver: (any NSObjectProtocol)?
+    private var sessionObserver: (any NSObjectProtocol)?
 
     init() {
         self.keyObserver = NotificationCenter.default.addObserver(
@@ -69,10 +72,21 @@ final class PearStore {
                 await self.refresh()
             }
         }
+        self.sessionObserver = NotificationCenter.default.addObserver(
+            forName: PearSessionStore.didChangeNotification,
+            object: nil,
+            queue: .main)
+        { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.hasPlaygroundSession = PearSessionStore.load() != nil
+                await self.refresh()
+            }
+        }
     }
 
     private var api: PearAPI {
-        PearAPI(deviceKey: PearDeviceKeyStore.load())
+        PearAPI.current
     }
 
     // MARK: - Refresh
@@ -89,17 +103,27 @@ final class PearStore {
 
         let api = self.api
         self.hasDeviceKey = api.deviceKey != nil
+        self.hasPlaygroundSession = api.sessionID != nil
 
         // Each surface degrades independently — a failing endpoint should not
         // blank the whole world.
         async let feedTask = api.homeFeedOrNil()
         async let briefingTask = api.briefingOrNil()
+        async let projectsTask = api.projectsOrNil()
         async let statusTask = api.statusDataOrNil()
         async let appsTask = api.appsRegistryOrNil()
+        async let conversationsTask = api.conversationsOrNil()
 
-        let (feed, briefing, status, registry) = await (feedTask, briefingTask, statusTask, appsTask)
+        let feed = await feedTask
+        let briefing = await briefingTask
+        let projectList = await projectsTask
+        let status = await statusTask
+        let registry = await appsTask
+        let conversations = await conversationsTask
 
-        if let status {
+        if let projectList, !projectList.isEmpty {
+            self.apply(projects: projectList)
+        } else if let status {
             self.projects = (status.active ?? []).sorted { lhs, rhs in
                 (lhs.updatedDate ?? .distantPast) > (rhs.updatedDate ?? .distantPast)
             }
@@ -110,9 +134,12 @@ final class PearStore {
                 .filter { $0.visible ?? true }
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
+        if let conversations {
+            self.conversations = conversations
+        }
         self.briefingSummary = briefing?.summary
 
-        if let feed, feed.days?.isEmpty == false || feed.items?.isEmpty == false {
+        if let feed, feed.hasPrivateCorpus, feed.hasDisplayContent {
             self.apply(feed: feed)
             self.feedSource = .homeFeed
         } else {
@@ -120,7 +147,7 @@ final class PearStore {
             self.feedSource = .fallback
         }
 
-        if feed == nil, briefing == nil, status == nil, registry == nil {
+        if feed == nil, briefing == nil, projectList == nil, status == nil, registry == nil, conversations == nil {
             self.lastError = "Couldn't reach pear.metahack.io"
         } else {
             self.lastError = nil
@@ -148,7 +175,7 @@ final class PearStore {
                 guard !cards.isEmpty else { return nil }
                 return DaySection(label: day.label ?? day.date ?? "Recently", cards: cards)
             }
-        } else if let items = feed.items, !items.isEmpty {
+        } else if let items = feed.streamOrItems, !items.isEmpty {
             let cards = items.compactMap(Self.streamCard(from:))
             if !cards.isEmpty {
                 sections = [DaySection(label: "Recently", cards: cards)]
@@ -160,13 +187,34 @@ final class PearStore {
     private static func streamCard(from item: PearHomeFeed.Item) -> StreamCard? {
         guard let title = item.title, !title.isEmpty else { return nil }
         return StreamCard(
-            emoji: item.emoji ?? "📄",
+            emoji: item.bestEmoji ?? "📄",
             title: title,
             summary: item.bestSummary,
             tag: item.bestTag,
             kind: item.bestKind,
-            url: item.bestURL.flatMap { URL(string: $0) },
-            pinned: item.pinned ?? false)
+            url: item.bestURL.flatMap(PearAPI.absoluteURL(_:)),
+            pinned: item.isPinnedInFeed)
+    }
+
+    private func apply(projects projectList: [PearStatusData.Project]) {
+        let sorted = projectList.sorted { lhs, rhs in
+            let lhsCategory = Self.categoryRank(lhs.category)
+            let rhsCategory = Self.categoryRank(rhs.category)
+            if lhsCategory != rhsCategory { return lhsCategory < rhsCategory }
+            return (lhs.updatedDate ?? .distantPast) > (rhs.updatedDate ?? .distantPast)
+        }
+        let active = sorted.filter { Self.categoryRank($0.category) == 0 }
+        self.projects = active.isEmpty ? sorted : active
+        self.onDeckProjects = sorted.filter { Self.categoryRank($0.category) == 1 }
+    }
+
+    private static func categoryRank(_ raw: String?) -> Int {
+        let normalized = (raw ?? "active").lowercased()
+        if normalized == "active" { return 0 }
+        if normalized.contains("deck") || normalized.contains("queued") { return 1 }
+        if normalized.contains("shel") { return 2 }
+        if normalized.contains("attic") { return 3 }
+        return 4
     }
 
     // MARK: - Fallback composition (no /api/home/feed yet)
@@ -207,7 +255,7 @@ final class PearStore {
                 StreamCard(
                     emoji: project.emoji ?? "📦",
                     title: project.name,
-                    summary: project.summary,
+                    summary: project.bestSummary,
                     tag: project.hashtag,
                     kind: project.freshness ?? "project",
                     url: nil)
@@ -225,5 +273,18 @@ final class PearStore {
 
     func project(withId id: Int) -> PearStatusData.Project? {
         (self.projects + self.onDeckProjects).first { $0.id == id }
+    }
+}
+
+private extension PearHomeFeed {
+    var streamOrItems: [PearHomeFeed.Item]? {
+        if let stream, !stream.isEmpty { return stream }
+        return self.items
+    }
+
+    var hasDisplayContent: Bool {
+        self.days?.contains { $0.items?.isEmpty == false } == true
+            || self.stream?.isEmpty == false
+            || self.items?.isEmpty == false
     }
 }

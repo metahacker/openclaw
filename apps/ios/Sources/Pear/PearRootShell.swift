@@ -7,6 +7,7 @@ import UIKit
 struct PearRootShell: View {
     @Environment(NodeAppModel.self) private var appModel
     @State private var store = PearStore()
+    @State private var authModel = PearAuthModel()
     @State private var chatModel = PearChatModel()
     @State private var selectedTab: Tab = .home
     @State private var showClassicCanvas = false
@@ -22,7 +23,7 @@ struct PearRootShell: View {
 
     var body: some View {
         TabView(selection: self.$selectedTab) {
-            PearHomeView(store: self.store, openChats: { self.selectedTab = .chats })
+            PearHomeView(store: self.store, authModel: self.authModel, openChats: { self.selectedTab = .chats })
                 .tabItem { Label("Home", systemImage: "house") }
                 .tag(Tab.home)
 
@@ -40,6 +41,7 @@ struct PearRootShell: View {
 
             PearBackstageView(
                 store: self.store,
+                authModel: self.authModel,
                 openClassicCanvas: { self.showClassicCanvas = true },
                 openNodeChat: { self.showNodeChat = true })
                 .tabItem { Label("More", systemImage: "ellipsis") }
@@ -49,7 +51,10 @@ struct PearRootShell: View {
         // Info.plist hides the status bar for the fullscreen canvas; the native
         // shell wants it back (the classic cover re-hides its own).
         .statusBarHidden(false)
-        .task { await self.store.refresh() }
+        .task {
+            await self.authModel.bootstrap()
+            await self.store.refresh()
+        }
         // Node-world plumbing stays live at the root so pairing, trust prompts,
         // gateway deep links, and camera flashes work without the classic view.
         .gatewayTrustPromptAlert()
