@@ -62,12 +62,12 @@ struct PearRootShell: View {
         .onChange(of: self.appModel.openChatRequestID) { _, _ in
             self.showNodeChat = true
         }
-        .onChange(of: self.appModel.screen.urlString) { _, newValue in
-            // The gateway (or the connect deep link) pointed the canvas somewhere —
-            // surface the classic view so agent-driven navigation still lands.
-            if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                self.showClassicCanvas = true
-            }
+        .onChange(of: self.appModel.canvasCommandNonce) { _, _ in
+            // The gateway explicitly drove the canvas (canvas.present/navigate,
+            // a2ui.reset) — surface the classic view so agent-driven navigation
+            // still lands. Connect-time auto-navigation does not bump the nonce,
+            // so launching the app on a paired phone stays in the native shell.
+            self.showClassicCanvas = true
         }
         .sheet(isPresented: self.$showNodeChat) {
             ChatSheet(

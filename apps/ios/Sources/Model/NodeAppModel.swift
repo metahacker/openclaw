@@ -143,6 +143,10 @@ final class NodeAppModel {
     var cameraHUDText: String?
     var cameraHUDKind: CameraHUDKind?
     var cameraFlashNonce: Int = 0
+    /// Bumped only when the gateway explicitly drives the canvas (canvas.present/
+    /// navigate, a2ui.reset) — connect-time auto-navigation must not bump it, so
+    /// the native shell can tell agent intent apart from session restore.
+    var canvasCommandNonce: Int = 0
     var screenRecordActive: Bool = false
 
     init(
@@ -830,6 +834,7 @@ final class NodeAppModel {
             } else {
                 self.screen.navigate(to: url)
             }
+            self.canvasCommandNonce &+= 1
             return BridgeInvokeResponse(id: req.id, ok: true)
         case OpenClawCanvasCommand.hide.rawValue:
             self.screen.showDefaultCanvas()
@@ -837,6 +842,7 @@ final class NodeAppModel {
         case OpenClawCanvasCommand.navigate.rawValue:
             let params = try Self.decodeParams(OpenClawCanvasNavigateParams.self, from: req.paramsJSON)
             self.screen.navigate(to: params.url)
+            self.canvasCommandNonce &+= 1
             return BridgeInvokeResponse(id: req.id, ok: true)
         case OpenClawCanvasCommand.evalJS.rawValue:
             let params = try Self.decodeParams(OpenClawCanvasEvalParams.self, from: req.paramsJSON)
@@ -893,6 +899,7 @@ final class NodeAppModel {
                         code: .unavailable,
                         message: "A2UI_HOST_UNAVAILABLE: A2UI host not reachable"))
             }
+            self.canvasCommandNonce &+= 1
 
             let json = try await self.screen.eval(javaScript: """
             (() => {

@@ -89,3 +89,17 @@ functionality and demoting the WebView to a "Classic view" fallback.
 Frozen on green. Next natural steps when humans wake: install build 21, walk the five tabs, link
 device via Safari handoff, and decide whether the home stream fallback reads right until the feed
 API lands.
+
+## 2026-07-22 ~18:55 UTC — First human eyes found the launch bug (fix → build 22)
+
+- Alex installed build 21: "it seems unchanged i just get the web view." Root cause found in
+  minutes: `showA2UIOnConnectIfNeeded()` auto-navigates the canvas on every gateway connect, and
+  PearRootShell watched `screen.urlString` — so on a paired phone the classic fullscreen WebView
+  covered the native shell within seconds of launch. The native app was there the whole time,
+  underneath, with only the small "Back to app" pill at bottom-left giving it away.
+- Fix (PEAR main thread, surgical): new `NodeAppModel.canvasCommandNonce` (mirrors the
+  cameraFlashNonce pattern) bumped ONLY by explicit gateway canvas intent — canvas.present
+  (non-empty url), canvas.navigate, a2ui.reset after ready. `showA2UIOnConnectIfNeeded()` and
+  session restore never bump it. PearRootShell now watches the nonce instead of the raw URL, so
+  launch lands in the native shell and agent-driven navigation still surfaces Classic view.
+- Node functionality untouched beyond the three additive nonce bumps; no deletions.
