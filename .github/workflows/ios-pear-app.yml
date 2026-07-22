@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - pear-ios-hello-testflight
+      - pear-ios-native-ux
     paths:
       - .github/workflows/ios-pear-app.yml
       - apps/ios/**
@@ -31,7 +32,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-      MARKETING_VERSION: "2026.7.11"
+      MARKETING_VERSION: "2026.7.22"
       BUILD_NUMBER: ${{ github.run_number }}
     defaults:
       run:
