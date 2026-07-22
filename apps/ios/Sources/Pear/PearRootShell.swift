@@ -46,6 +46,9 @@ struct PearRootShell: View {
                 .tag(Tab.backstage)
         }
         .tint(PearTheme.pear)
+        // Info.plist hides the status bar for the fullscreen canvas; the native
+        // shell wants it back (the classic cover re-hides its own).
+        .statusBarHidden(false)
         .task { await self.store.refresh() }
         // Node-world plumbing stays live at the root so pairing, trust prompts,
         // gateway deep links, and camera flashes work without the classic view.
