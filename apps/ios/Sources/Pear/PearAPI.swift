@@ -260,6 +260,24 @@ struct PearAPI: Sendable {
         }
     }
 
+    // Non-throwing conveniences for concurrent loads where a failed surface
+    // should simply come back empty.
+    func homeFeedOrNil() async -> PearHomeFeed? {
+        try? await self.homeFeed()
+    }
+
+    func briefingOrNil() async -> PearBriefing? {
+        try? await self.briefing()
+    }
+
+    func statusDataOrNil() async -> PearStatusData? {
+        try? await self.statusData()
+    }
+
+    func appsRegistryOrNil() async -> PearAppsRegistry? {
+        try? await self.appsRegistry()
+    }
+
     static func parseISODate(_ raw: String) -> Date? {
         let withFractions = ISO8601DateFormatter()
         withFractions.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

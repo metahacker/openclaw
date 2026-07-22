@@ -92,10 +92,10 @@ final class PearStore {
 
         // Each surface degrades independently — a failing endpoint should not
         // blank the whole world.
-        async let feedTask: PearHomeFeed? = try? api.homeFeed()
-        async let briefingTask: PearBriefing? = try? api.briefing()
-        async let statusTask: PearStatusData? = try? api.statusData()
-        async let appsTask: PearAppsRegistry? = try? api.appsRegistry()
+        async let feedTask = api.homeFeedOrNil()
+        async let briefingTask = api.briefingOrNil()
+        async let statusTask = api.statusDataOrNil()
+        async let appsTask = api.appsRegistryOrNil()
 
         let (feed, briefing, status, registry) = await (feedTask, briefingTask, statusTask, appsTask)
 
