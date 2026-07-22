@@ -62,3 +62,13 @@ Sources/Voice/VoiceWakePreferences.swift
 ../../Swabble/Sources/SwabbleKit/WakeWordGate.swift
 Sources/Voice/TalkModeManager.swift
 Sources/Voice/TalkOrbOverlay.swift
+Sources/Pear/PearAPI.swift
+Sources/Pear/PearAppsView.swift
+Sources/Pear/PearBackstageView.swift
+Sources/Pear/PearChatModel.swift
+Sources/Pear/PearChatsView.swift
+Sources/Pear/PearHomeView.swift
+Sources/Pear/PearProjectsView.swift
+Sources/Pear/PearRootShell.swift
+Sources/Pear/PearStore.swift
+Sources/Pear/PearTheme.swift

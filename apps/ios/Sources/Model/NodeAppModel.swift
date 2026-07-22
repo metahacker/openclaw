@@ -2578,6 +2578,9 @@ extension NodeAppModel {
             self.screen.errorText = "Connect link was missing a valid device key."
             return
         }
+        // The native shell calls the pear-mobile APIs with this key directly;
+        // the WebView still exchanges it for its own session cookie below.
+        PearDeviceKeyStore.save(key)
         var auth = URLComponents(string: "https://pear.metahack.io/auth/device")!
         auth.queryItems = [
             URLQueryItem(name: "k", value: key),

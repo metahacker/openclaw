@@ -506,7 +506,9 @@ struct OpenClawApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootCanvas()
+            // PEAR build: the native Playground shell is the app; the classic
+            // canvas WebView survives behind ⋯ → Classic view.
+            PearRootShell()
                 .environment(self.appModel)
                 .environment(self.appModel.voiceWake)
                 .environment(self.gatewayController)
