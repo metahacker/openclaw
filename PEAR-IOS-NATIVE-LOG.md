@@ -62,3 +62,30 @@ functionality and demoting the WebView to a "Classic view" fallback.
   detail composes pages from feed items matching the project hashtag and links out to the full
   wiki; `/api/home/feed` still 401 server-side so the app will run on fallback until that lane
   ships (client already prefers the feed when it appears).
+
+## 2026-07-22 10:30 UTC — GREEN + SUBMITTED (gates)
+
+1. **CI green, first compile**: run 29911426497 and 29911511344 were superseded by quick follow-up
+   pushes (async-let hardening, status-bar fix) before their build steps mattered; definitive run
+   **29911571727** = SUCCESS end-to-end (xcodegen → build → sign → export).
+   https://github.com/metahacker/openclaw/actions/runs/29911571727
+2. **TestFlight**: fastlane log — "Successfully uploaded package to App Store Connect… Successfully
+   uploaded the new binary" at 10:28:14Z. **PEAR 2026.7.22 (build 21)**, branch pear-ios-native-ux,
+   head ca3263a122a. (Upload uses skip_waiting_for_build_processing; ASC-side processing state not
+   observable from this box — the key lives only in GH secrets. Expect it visible in TestFlight
+   within minutes, as with prior builds on this lane.)
+3. **WebView demoted, alive**: ⋯ → Classic view presents the untouched RootCanvas fullscreen; the
+   shell also auto-surfaces it whenever the gateway or connect deep link navigates the canvas.
+4. **Node functionality untouched by diff**: full branch diff = new Pear/ directory + 3 additive
+   lines in NodeAppModel (Keychain persist of device key) + RootCanvas→PearRootShell root swap +
+   filelist + 2-line workflow change + this log. No deletions in node/gateway code. Pre-existing
+   uncommitted WIP (src/channels/\*, voice-patches/) never staged, still dirty in the worktree.
+5. **Honest limitations**: no on-device/simulator run was possible from this Linux lane — the UI has
+   compiled and shipped but nobody has _seen_ it yet; the Chats drill-down for "in motion" threads
+   is the single pear-mobile lane with a context label; /api/home/feed still 401 server-side, so
+   Home runs on the projects fallback until that lane ships (client flips over automatically);
+   swiftformat's CI gate skips apps/ios by root config — style verified by eye against siblings.
+
+Frozen on green. Next natural steps when humans wake: install build 21, walk the five tabs, link
+device via Safari handoff, and decide whether the home stream fallback reads right until the feed
+API lands.
