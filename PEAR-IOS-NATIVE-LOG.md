@@ -103,3 +103,41 @@ API lands.
   session restore never bump it. PearRootShell now watches the nonce instead of the raw URL, so
   launch lands in the native shell and agent-driven navigation still surfaces Classic view.
 - Node functionality untouched beyond the three additive nonce bumps; no deletions.
+  2026-07-22T00:00:00-07:00 lane started: iOS native lane resumed on pear-ios-native-ux at HEAD 2324ab2 for Google OAuth persistent login and Playground-design polish.
+  2026-07-22T13:42:57-07:00 milestone 1 reads: confirmed the server's durable Playground auth is `pear_session` in `playground.sessions`; `/connect/app` requires a real web Google login via `/auth/login` when missing, then returns `openclaw://playground?k=…`; `/auth/device?k=…` mints a `pear_session` Set-Cookie for the app. No playground edit needed. Native gap is to open that broker with ASWebAuthenticationSession, exchange the key natively, persist `pear_session`, and send it as Cookie on every API call. Also found real `/api/home/feed` shape is `in_motion` + `stream` + `shelves`, not the first-cut guessed `days/items/inMotion`, so decoding must be corrected with auth.
+  2026-07-22T13:53:01-07:00 milestone 1 implementation checkpoint: added Keychain-backed `PearSessionStore`, ASWebAuthenticationSession Google broker login, native `/auth/device` Set-Cookie capture, automatic legacy device-key-to-session upgrade on launch/deep-link, and cookie injection on all PearAPI calls. Home now decodes authenticated `in_motion`/`stream` feed and only marks live feed when `visibility=all`; Projects uses `/api/projects` plus project wiki `/api/projects/:id/sites`; Chats uses authenticated `/api/chat/conversations` and page-scoped `/api/chat` history/send, with pear-mobile Bearer key kept as fallback. Local `git diff --check` and line-length/large-tuple scans are clean; no Swift toolchain exists on this Linux box, so CI is still the compiler.
+  2026-07-22T14:18:58-07:00 compile verification started: oriented from checkpoint 21a4397e (`PearAuth.swift`, authenticated `PearAPI`, store/view wiring) plus the lane log tail. Dispatching one `ios-pear-app.yml` CI run on `metahacker/openclaw@pear-ios-native-ux` to verify milestone 1 compiles before any Playground polish.
+
+## 2026-07-22 19:35 PT — PEAR (main) dispatched the I1 verify build directly
+
+- The ios-verify lane was slow to act, so PEAR dispatched the OAuth compile-verification build itself:
+  CI run 29974779646 (in_progress) on pear-ios-native-ux HEAD 21a4397e.
+  https://github.com/metahacker/openclaw/actions/runs/29974779646
+- LANE/WATCHDOG: do NOT dispatch another build until this one finishes (Apple cert cap). Watch run
+  29974779646; if it FAILS, read the compile errors and fix under apps/ios with scoped commits, then
+  re-dispatch ONE build. If GREEN, log the TestFlight build number — that's the I1 gate.
+
+## 2026-07-24 — I2 (iOS polish + logo): official PEAR pear app icon
+
+- Ground-truth on entry: origin/pear-ios-native-ux tip = 2324ab2; CI run #23 (id 29974779646,
+  GREEN) built sha 2324ab2 via workflow_dispatch = TestFlight build 23. The OAuth WIP commit
+  21a4397e was local-only and had NOT been CI-compiled (run 23's "HEAD 21a4397e" label was
+  inaccurate; the dispatch ran the pushed branch tip 2324ab2). So this push is the first CI compile
+  of the OAuth milestone as well.
+- Design language (calm/warm/cream, serif) was already applied across all 5 native surfaces in the
+  native-shell milestone (PearTheme + Pear/\*View), so I2's remaining concrete deliverable was the
+  official logo as the app icon.
+- App icon rebuilt from the official PEAR vector (client/src/assets/pear-logo\*.svg + PearLogo.tsx),
+  NOT invented: took the pear body + stem paths, removed BOTH leaf paths (big tan leaf M200.449 and
+  small green leaf M136.753), derotated the mark 195° so it sits at the 🍐 emoji angle (stem up,
+  round bottom, slight right lean), and centered it on the cream ground (--cream #FAF6EF) using the
+  sanctioned "positive" pear colors for a light background (body #909D15, stem #B48C64). Leaf-removed
+  - derotated per chat/app-icon doctrine.
+- Regenerated every PNG in Sources/Assets.xcassets/AppIcon.appiconset (28 files, 20→1024) at exact
+  sizes, opaque RGB (color-type 2, 8-bit, no alpha) so the CI icon-verification gate passes; ran the
+  CI's own Python check locally = PASS. Reads clearly down to 40px. WatchApp assets left untouched
+  (watch target is dropped in v1 CI). No Swift/code changes — pure asset regen; zero compile risk
+  from the icon itself.
+- Push carries 21a4397e (OAuth, first CI compile) + this icon commit → auto-triggers ios-pear-app.yml
+  (paths apps/ios/\*\*). Expected next run #24 → BUILD_NUMBER 24. I2 is NOT done: final gate is Alex's
+  eyes on TestFlight.
