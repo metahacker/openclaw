@@ -91,6 +91,11 @@ targets:
       properties:
         CFBundleDisplayName: OpenClaw
         CFBundleIconName: AppIcon
+        # Export compliance: the app uses only standard, exempt encryption (HTTPS/TLS).
+        # Declaring this up front keeps App Store Connect from parking every TestFlight
+        # upload in "Missing Compliance" (which hides the build from testers until a human
+        # answers the prompt) — invisible failure mode behind skip_waiting_for_build_processing.
+        ITSAppUsesNonExemptEncryption: false
         CFBundleURLTypes:
           - CFBundleURLName: ai.openclaw.ios
             CFBundleURLSchemes:
