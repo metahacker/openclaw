@@ -141,3 +141,27 @@ API lands.
 - Push carries 21a4397e (OAuth, first CI compile) + this icon commit → auto-triggers ios-pear-app.yml
   (paths apps/ios/\*\*). Expected next run #24 → BUILD_NUMBER 24. I2 is NOT done: final gate is Alex's
   eyes on TestFlight.
+
+## 2026-07-25 — CORRECTION (per Alex): app icon = FULL official PEAR logo, leaf ON, normal orientation
+
+- Alex correction: the iOS APP ICON must use the full official PEAR logo WITH the leaf, in NORMAL
+  (non-derotated) orientation. Stripping the leaf and derotating to the emoji angle is ONLY for
+  emoji-style icons (e.g. the web chat widget), NOT the app icon. The prior build (commit 3a533279d,
+  "build 24") wrongly removed both leaf paths and derotated the mark 195 degrees. This reverses that.
+- Rebuilt the master from ALL FOUR official mark paths (PearLogo.tsx / pear-logo-positive.svg),
+  NORMAL orientation (no rotate), positive palette: body M105.514 #909D15, stem M111.306 #B48C64,
+  big leaf/tan lobe M200.449 #B48C64, small green leaf/accent M136.753 #909D15. Rendered via
+  rsvg-convert at 1600px, trimmed, composed centered on cream #FAF6EF (mark fit within 640px of the
+  1024 canvas for comfortable padding).
+- Regenerated all 28 PNGs (20 to 1024) at exact sizes, opaque RGB (PNG color-type 2, no alpha). Ran
+  the CI's own Python check locally (the "Verify iPad support and PEAR icon catalog" step) = PASS,
+  plus an extended sweep of all 28 declared files (exact size + no alpha) = PASS. Pure asset regen.
+- Build-24 invisibility investigation (fixed in a separate scoped commit): the app was missing
+  ITSAppUsesNonExemptEncryption, so App Store Connect parks every upload in "Missing Compliance"
+  (invisible to testers) until answered by hand, and fastlane's skip_waiting_for_build_processing:true
+  masks it (CI logs "Successfully uploaded the new binary" regardless of the parked state). Fix: added
+  ITSAppUsesNonExemptEncryption=false to the app target info.properties in project.yml so future
+  uploads (incl. this one) go straight to testers. BUILD_NUMBER is github.run_number (strictly
+  increasing) so there is no CFBundleVersion collision for MARKETING_VERSION 2026.7.22.
+- Push triggers the next ios-pear-app.yml run; BUILD_NUMBER = that run_number. NOT done: final gate is
+  Alex's eyes on TestFlight.
