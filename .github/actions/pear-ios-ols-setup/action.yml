@@ -6,9 +6,8 @@ runs:
     - uses: actions/setup-node@v4
       with:
         node-version: '24.19.0'
+    # Version comes from package.json "packageManager"; a second explicit pin is rejected by action-setup.
     - uses: pnpm/action-setup@v4
-      with:
-        version: '12.3.4'
     - uses: actions/setup-python@v5
       with:
         python-version: '3.13'
