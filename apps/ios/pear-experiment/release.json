@@ -1,0 +1,9 @@
+{
+  "appId": "6759186465",
+  "teamId": "7TWXNL6G85",
+  "version": "2026.9.9",
+  "branch": "pear-ios-ols-experiment-20260909",
+  "repository": "metahacker/openclaw",
+  "upstreamCommit": "115af64da29cdf696f5ccd5c6d0d68e947c964e0",
+  "notes": "One Living Surface experimental build: one continuous conversation, inline project anchors, compact context/status/navigation, and optional gestures. Based on the original One Living Surface, not /v4."
+}

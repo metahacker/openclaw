@@ -62,6 +62,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 FASTLANE_ARGS=(ios release_upload)
+if [[ "${PEAR_OLS_EXPERIMENT:-}" == "1" ]]; then
+  if [[ -n "${RELEASE_VERSION}" || -n "${APP_STORE_REVISION}" || -n "${BUILD_NUMBER}" ]]; then
+    echo "PEAR experiment identity is source-controlled and Apple allocates its build; overrides are forbidden." >&2
+    exit 1
+  fi
+  FASTLANE_ARGS=(ios pear_ols_release)
+fi
 if [[ -n "${RELEASE_VERSION}" ]]; then
   FASTLANE_ARGS+=("release_version:${RELEASE_VERSION}")
 fi

@@ -1,0 +1,137 @@
+# This fork-only lane is reachable solely through the supported release wrapper.
+# It does not alter the canonical OpenClaw App Store identity or publish metadata.
+require "base64"
+require "net/http"
+require "uri"
+
+module PearOLSRelease
+  def self.config
+    JSON.parse(File.read(File.expand_path("../pear-experiment/release.json", __dir__)))
+  end
+
+  def self.request(method, path, payload = nil)
+    uri = URI.join("https://api.appstoreconnect.apple.com", path)
+    unless uri.scheme == "https" && uri.host == "api.appstoreconnect.apple.com"
+      raise "Invalid App Store Connect request destination"
+    end
+    request = Net::HTTP.const_get(method.capitalize).new(uri)
+    Spaceship::ConnectAPI.token.refresh! if Spaceship::ConnectAPI.token.expired?
+    request["Authorization"] = "Bearer #{Spaceship::ConnectAPI.token.text}"
+    request["Content-Type"] = "application/json"
+    request.body = JSON.generate(payload) if payload
+    response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 20, read_timeout: 60) { |http| http.request(request) }
+    unless response.is_a?(Net::HTTPSuccess)
+      raise "App Store Connect #{method} failed (HTTP #{response.code}); response body withheld"
+    end
+    response.body.to_s.empty? ? {} : JSON.parse(response.body)
+  end
+
+  def self.next_build(app)
+    uploads = app_store_uploads(app.id)
+    numbers = uploads.map do |upload|
+      detail = upload.state
+      state = detail.is_a?(Hash) ? detail["state"].to_s : ""
+      unless %w[AWAITING_UPLOAD PROCESSING FAILED COMPLETE].include?(state)
+        raise "Unknown Apple upload state; refusing build-number allocation"
+      end
+      if %w[AWAITING_UPLOAD PROCESSING].include?(state)
+        raise "Another Apple-visible upload is unresolved; reconcile it before a new release"
+      end
+      number = upload.cf_build_version.to_s
+      raise "Unrecognized Apple build number" unless number.match?(/\A[0-9]+\z/)
+      number.to_i
+    end
+    # Older successful builds may precede Apple's buildUploads history endpoint.
+    app.get_builds(limit: 200).each do |build|
+      number = build.version.to_s
+      raise "Unrecognized historical Apple build number" unless number.match?(/\A[0-9]+\z/)
+      numbers << number.to_i
+    end
+    (numbers.max || 0) + 1
+  end
+
+  def self.app_store_uploads(app_id)
+    Spaceship::ConnectAPI.get_build_uploads(app_id: app_id, filter: { platform: "IOS" }, includes: nil, limit: 200, sort: nil).all_pages.flat_map(&:to_models)
+  end
+
+  def self.internal_group(app)
+    groups = app.get_beta_groups.select { |group| group.is_internal_group == true }
+    selected = groups.select { |group| group.name == "PEAR Team" }
+    selected = groups.select { |group| group.name == "Internal Testers" } if selected.empty?
+    raise "An unambiguous existing PEAR internal testing group is required" unless selected.length == 1
+    selected.first
+  end
+end
+
+platform :ios do
+  desc "Source-gated PEAR experimental internal TestFlight release"
+  lane :pear_ols_release do
+    unless ENV["OPENCLAW_IOS_RELEASE_WRAPPER"] == "1" && ENV["PEAR_OLS_EXPERIMENT"] == "1" && ENV["GITHUB_ACTIONS"] == "true"
+      UI.user_error!("PEAR releases require the manually dispatched experiment workflow and pnpm ios:release:upload")
+    end
+    config = PearOLSRelease.config
+    root = File.expand_path("../../..", __dir__)
+    ios = File.join(root, "apps/ios")
+    evidence = File.join(ios, "build/pear-ols-evidence")
+    sh("python3", File.join(ios, "pear-experiment/verify-gate.py"))
+    sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting")
+    UI.user_error!("PEAR release source must be committed and clean") unless release_source_clean?
+    UI.user_error!("PEAR developer team mismatch") unless ENV["IOS_DEVELOPMENT_TEAM"] == config.fetch("teamId")
+    %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT IOS_BUNDLE_ID].each { |name| UI.user_error!("Missing #{name}") if ENV[name].to_s.empty? }
+    private_key = ENV.fetch("ASC_KEY_CONTENT")
+    private_key = private_key.include?("BEGIN PRIVATE KEY") ? private_key.gsub('\\n', "\n") : Base64.strict_decode64(private_key)
+    api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: private_key, is_key_content_base64: false)
+    app = Spaceship::ConnectAPI::App.get(app_id: config.fetch("appId"))
+    UI.user_error!("Stored bundle identifier does not match existing PEAR App Store Connect app") unless app.bundle_id == ENV.fetch("IOS_BUNDLE_ID")
+    group = PearOLSRelease.internal_group(app)
+    build_number = PearOLSRelease.next_build(app)
+    plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, state: "prepared" }
+    receipt = File.join(evidence, "release-receipt.json")
+    File.write(receipt, JSON.pretty_generate(plan) + "\n")
+    sh("python3", File.join(ios, "pear-experiment/prepare.py"), "--build-number", build_number.to_s)
+    sh("node", File.join(root, "scripts/ios-write-swift-filelist.mjs"))
+    Dir.chdir(ios) { sh("xcodegen", "generate", "--spec", "project.pear-ols.generated.yml") }
+    key_file = Tempfile.new(["pear-asc-", ".p8"])
+    key_file.chmod(0600)
+    key_file.write(private_key)
+    key_file.close
+    FileUtils.mkdir_p(File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles"))
+    FileUtils.mkdir_p(File.expand_path("~/Library/MobileDevice/Provisioning Profiles"))
+    auth_args = ["-authenticationKeyPath", key_file.path, "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"), "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")].shelljoin
+    ipa = build_app(project: File.join(ios, "OpenClaw.xcodeproj"), scheme: "OpenClaw", configuration: "Release", export_method: "app-store", clean: true, skip_profile_detection: true, output_directory: File.join(ios, "build/pear-ols-release"), output_name: "PEAR-OLS.ipa", xcargs: "-allowProvisioningUpdates #{auth_args}", export_xcargs: "-allowProvisioningUpdates", export_options: { signingStyle: "automatic", teamID: config.fetch("teamId") })
+    sh("python3", File.join(ios, "pear-experiment/verify-ipa.py"), ipa, "--build-number", build_number.to_s)
+    # Re-read the Apple-owned allocation immediately before the only upload attempt.
+    UI.user_error!("Apple upload state changed during archive; re-plan on the next workflow run") unless PearOLSRelease.next_build(app) == build_number
+    sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting")
+    plan[:state] = "upload-starting"
+    File.write(receipt, JSON.pretty_generate(plan) + "\n")
+    upload_to_testflight(api_key: api_key, app_identifier: app.bundle_id, apple_id: app.id, ipa: ipa, skip_waiting_for_build_processing: false, wait_processing_timeout_duration: 3600, skip_submission: true, distribute_external: false, notify_external_testers: false, submit_beta_review: false, uses_non_exempt_encryption: false, changelog: config.fetch("notes"))
+    plan[:state] = "uploaded-processing-complete"
+    File.write(receipt, JSON.pretty_generate(plan) + "\n")
+    builds = app.get_builds(filter: { "preReleaseVersion.version" => config.fetch("version"), version: build_number.to_s }, includes: "preReleaseVersion")
+    exact = builds.select { |candidate| candidate.app_version == config.fetch("version") && candidate.version == build_number.to_s }
+    UI.user_error!("Cannot uniquely resolve the uploaded PEAR build") unless exact.length == 1
+    build = exact.first
+    apple_build = PearOLSRelease.request("GET", "/v1/builds/#{build.id}").fetch("data").fetch("attributes")
+    UI.user_error!("Apple has not validated the uploaded build") unless apple_build["processingState"] == "VALID"
+    group = PearOLSRelease.internal_group(app)
+    UI.user_error!("Existing internal group changed during upload") unless group.id == plan[:internalGroupId]
+    build.add_beta_groups(beta_groups: [group])
+    deadline = Time.now + 600
+    loop do
+      details = PearOLSRelease.request("GET", "/v1/builds/#{build.id}/buildBetaDetail").fetch("data").fetch("attributes")
+      state = details["internalBuildState"]
+      break if state == "IN_BETA_TESTING"
+      UI.user_error!("Uploaded build is not yet available to internal TestFlight (#{state})") if Time.now >= deadline
+      sleep 15
+    end
+    assigned = app.get_beta_groups.select { |candidate| candidate.fetch_builds.any? { |entry| entry.id == build.id } }
+    UI.user_error!("Internal TestFlight assignment could not be verified") unless assigned.any? { |candidate| candidate.id == group.id }
+    UI.user_error!("Unexpected external distribution detected") if assigned.any? { |candidate| candidate.is_internal_group != true }
+    plan.merge!(state: "IN_BETA_TESTING", buildId: build.id, verifiedInternalGroupIds: assigned.map(&:id))
+    File.write(receipt, JSON.pretty_generate(plan) + "\n")
+    UI.success("PEAR #{config.fetch('version')} (#{build_number}) verified in internal TestFlight")
+  ensure
+    key_file&.close!
+  end
+end

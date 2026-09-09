@@ -1,0 +1,79 @@
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+import subprocess
+
+
+def module(name):
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    result = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(result)
+    return result
+
+
+class ExperimentAdmissionTests(unittest.TestCase):
+    def test_supported_wrapper_keeps_default_and_never_falls_back(self):
+        root = Path(__file__).resolve().parents[3]
+        wrapper = root / "scripts/ios-release-upload.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            bundle = directory / "bundle"
+            bundle.write_text('#!/bin/bash\nif [[ "$2" == "check" ]]; then exit 0; fi\nprintf "%s\\n" "$*" >> "$PEAR_TEST_LOG"\nexit "${PEAR_TEST_EXIT:-0}"\n')
+            bundle.chmod(0o755)
+            log = directory / "calls"
+            env = {"PATH": f"{directory}:/usr/bin:/bin", "PEAR_TEST_LOG": str(log)}
+            result = subprocess.run(["/bin/bash", str(wrapper)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("exec fastlane ios release_upload", log.read_text())
+            log.write_text("")
+            env.update(PEAR_OLS_EXPERIMENT="1", PEAR_TEST_EXIT="39")
+            result = subprocess.run(["/bin/bash", str(wrapper)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 39)
+            self.assertEqual(len(log.read_text().splitlines()), 1)
+            self.assertIn("exec fastlane ios pear_ols_release", log.read_text())
+            log.write_text("")
+            result = subprocess.run(["/bin/bash", str(wrapper), "--build-number", "99"], env=env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(log.read_text(), "")
+
+    def test_wrong_source_and_automatic_dispatch_rejected(self):
+        gate = module("verify-gate")
+        config = json.loads((Path(__file__).parent / "release.json").read_text())
+        sha = "a" * 40
+        env = {"GITHUB_REPOSITORY": config["repository"], "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": f"refs/heads/{config['branch']}", "GITHUB_SHA": sha}
+        gate.verify(env, sha, config)
+        for field, bad in [("GITHUB_EVENT_NAME", "push"), ("GITHUB_REPOSITORY", "openclaw/openclaw"), ("GITHUB_REF", "refs/heads/main"), ("GITHUB_SHA", "b" * 40)]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                gate.verify(dict(env, **{field: bad}), sha, config)
+
+    def test_screenshots_bound_to_successful_exact_source(self):
+        gate = module("verify-evidence")
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            content = b"\x89PNG\r\n\x1a\nsynthetic fixture"
+            for name in ["iphone.png", "ipad.png"]:
+                (directory / name).write_bytes(content)
+            (directory / "formatting.patch").write_bytes(b"")
+            manifest = {"sourceSha": sha, "testsPassed": True, "formattingPatchSha256": hashlib.sha256(b"").hexdigest(), "screenshots": {name: hashlib.sha256(content).hexdigest() for name in ["iphone.png", "ipad.png"]}}
+            (directory / "manifest.json").write_text(json.dumps(manifest))
+            gate.verify(directory, sha)
+            with self.assertRaises(ValueError):
+                gate.verify(directory, "b" * 40)
+            patch = b"synthetic formatting diff"
+            (directory / "formatting.patch").write_bytes(patch)
+            manifest["formattingPatchSha256"] = hashlib.sha256(patch).hexdigest()
+            (directory / "manifest.json").write_text(json.dumps(manifest))
+            gate.verify(directory, sha)
+            with self.assertRaises(ValueError):
+                gate.verify(directory, sha, require_committed_formatting=True)
+            (directory / "ipad.png").write_bytes(content + b"changed")
+            with self.assertRaises(ValueError):
+                gate.verify(directory, sha)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,117 @@
+name: PEAR One Living Surface Experiment
+run-name: PEAR OLS ${{ inputs.source_sha }} · upload=${{ inputs.upload }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed commit on pear-ios-ols-experiment-20260909
+        required: true
+        type: string
+      upload:
+        description: After simulator and screenshot proof, upload to existing internal TestFlight
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Same distribution lane as existing PEAR CI; never cancel an uploader in flight.
+concurrency:
+  group: ios-pear-app
+  cancel-in-progress: false
+
+env:
+  PEAR_EXPECTED_SHA: ${{ inputs.source_sha }}
+  CARGO_BUILD_JOBS: '4'
+
+jobs:
+  validate:
+    name: Native OLS simulator and interaction proof
+    runs-on: macos-26
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Admit exact manual experiment source
+        run: python3 apps/ios/pear-experiment/verify-gate.py
+      - uses: ./.github/actions/pear-ios-ols-setup
+      - name: Format only PEAR source and retain exact patch
+        run: |
+          set -euo pipefail
+          mkdir -p apps/ios/build/pear-ols-evidence
+          .build/swift-tools/swiftformat --config config/swiftformat \
+            --unexclude "$GITHUB_WORKSPACE/apps/ios/Sources/Pear,$GITHUB_WORKSPACE/apps/ios/Tests/PearOLSTimelineTests.swift,$GITHUB_WORKSPACE/apps/ios/UITests/PearOLSUITests.swift,$GITHUB_WORKSPACE/apps/ios/Sources/OpenClawApp.swift" \
+            apps/ios/Sources/Pear apps/ios/Tests/PearOLSTimelineTests.swift \
+            apps/ios/UITests/PearOLSUITests.swift apps/ios/Sources/OpenClawApp.swift
+          git diff --binary --no-ext-diff -- apps/ios/Sources/Pear \
+            apps/ios/Tests/PearOLSTimelineTests.swift apps/ios/UITests/PearOLSUITests.swift \
+            apps/ios/Sources/OpenClawApp.swift > apps/ios/build/pear-ols-evidence/formatting.patch
+      - name: Verify release boundary checks
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s apps/ios/pear-experiment -p 'test_*.py'
+          ruby -c apps/ios/fastlane/PearOLSFastfile
+          ruby -c apps/ios/fastlane/Fastfile
+      - name: Prepare unsigned simulator build
+        run: |
+          set -euo pipefail
+          python3 apps/ios/pear-experiment/prepare.py --simulator --build-number 1
+          node scripts/ios-write-swift-filelist.mjs
+          cd apps/ios
+          xcodegen generate --spec project.pear-ols.generated.yml
+      - name: Build, test anchors and capture iPhone plus iPad
+        run: python3 apps/ios/pear-experiment/simulator.py
+      - name: Verify proof manifest
+        run: python3 apps/ios/pear-experiment/verify-evidence.py apps/ios/build/pear-ols-evidence "$GITHUB_SHA"
+      - name: Preserve simulator results and synthetic screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pear-ols-proof-${{ github.sha }}
+          path: apps/ios/build/pear-ols-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Signed PEAR archive and verified internal TestFlight
+    needs: validate
+    if: inputs.upload == true
+    runs-on: macos-26
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Admit exact manual experiment source
+        run: python3 apps/ios/pear-experiment/verify-gate.py
+      - uses: ./.github/actions/pear-ios-ols-setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: pear-ols-proof-${{ github.sha }}
+          path: apps/ios/build/pear-ols-evidence/
+      - name: Verify inherited source and screenshot proof
+        run: python3 apps/ios/pear-experiment/verify-evidence.py apps/ios/build/pear-ols-evidence "$GITHUB_SHA" --require-committed-formatting
+      - name: Release through the supported upload entry point
+        env:
+          PEAR_OLS_EXPERIMENT: '1'
+          IOS_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: pnpm ios:release:upload
+      - name: Preserve exact-build distribution receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pear-ols-release-${{ github.sha }}
+          path: apps/ios/build/pear-ols-evidence/release-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

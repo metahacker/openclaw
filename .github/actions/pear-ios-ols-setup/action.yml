@@ -1,0 +1,52 @@
+name: PEAR OLS iOS toolchain
+description: Prepare the pinned native-app toolchain without Gateway builds or services.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24.19.0'
+    - uses: pnpm/action-setup@v4
+      with:
+        version: '12.3.4'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4.10'
+        bundler: '2.6.9'
+        bundler-cache: true
+        working-directory: apps/ios
+    - name: Install native tooling
+      shell: bash
+      run: |
+        set -euo pipefail
+        brew install xcodegen
+        python3 -m pip install PyYAML==6.0.3
+        scripts/install-swift-tools.sh .build/swift-tools
+        echo "$GITHUB_WORKSPACE/.build/swift-tools" >> "$GITHUB_PATH"
+        if ! command -v rustup >/dev/null; then
+          brew install rustup
+          export PATH="$(brew --prefix rustup)/bin:$PATH"
+          echo "$(brew --prefix rustup)/bin" >> "$GITHUB_PATH"
+        fi
+        rustup toolchain install nightly-2026-09-05 --profile minimal --component rust-src
+        pnpm install --frozen-lockfile
+    - name: Select newest installed Xcode
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import glob, re, subprocess
+        choices = []
+        for path in glob.glob('/Applications/Xcode*.app'):
+            version = tuple(int(p) for p in re.findall(r'[0-9]+', path))
+            if version and version[0] >= 26:
+                choices.append((version, path))
+        if not choices:
+            raise SystemExit('Xcode 26+ is required')
+        selected = max(choices)[1]
+        subprocess.run(['sudo', 'xcode-select', '-s', selected], check=True)
+        subprocess.run(['xcodebuild', '-version'], check=True)
+        PY

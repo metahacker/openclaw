@@ -727,51 +727,58 @@ struct OpenClawApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabs()
-                .tint(OpenClawBrand.accent)
-                .font(OpenClawType.body)
-                .environment(self.appearanceModel)
-                .preferredColorScheme(self.appearanceModel.preference.colorScheme)
-                .environment(self.appModel)
-                .environment(self.appModel.voiceWake)
-                .environment(self.gatewayController)
-                .task {
-                    if !Self.screenshotModeEnabled {
-                        self.voiceLiveActivityCoordinator.start(appModel: self.appModel)
-                    }
-                    self.appModel.setScenePhase(self.scenePhase)
-                    self.appDelegate.appModel = self.appModel
-                    self.appDelegate.scenePhaseChanged(self.scenePhase)
-                    self.applyWindowTint()
-                    self.gatewayController.setScenePhase(self.scenePhase)
-                    #if DEBUG
-                    if Self.liveActivityVoicePreviewEnabled {
-                        LiveActivityManager.shared.startVoicePreview()
-                    }
-                    #endif
+            Group {
+                if ProcessInfo.processInfo.arguments.contains("--openclaw-screenshot-mode") {
+                    RootTabs()
+                } else {
+                    OLSRootView()
                 }
-                .onReceive(
-                    NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification),
-                    perform: { _ in
-                        OpenClawType.refreshUIKitAppearance(in: Self.connectedWindows())
-                    })
-                .onOpenURL { url in
-                    // SwiftUI owns normal scene delivery; the delegate also queues URLs
-                    // that arrive before the scene has installed its model.
-                    Task { await self.appDelegate.handleOpenURL(url, model: self.appModel) }
+            }
+            .tint(OpenClawBrand.accent)
+            .font(OpenClawType.body)
+            .environment(self.appearanceModel)
+            .preferredColorScheme(self.appearanceModel.preference.colorScheme)
+            .environment(self.appModel)
+            .environment(self.appModel.voiceWake)
+            .environment(self.gatewayController)
+            .task {
+                if !Self.screenshotModeEnabled {
+                    self.voiceLiveActivityCoordinator.start(appModel: self.appModel)
                 }
-                .onChange(of: self.scenePhase) { _, newValue in
-                    self.appModel.setScenePhase(newValue)
-                    self.gatewayController.setScenePhase(newValue)
-                    self.appDelegate.scenePhaseChanged(newValue)
-                    self.applyWindowTint()
+                self.appModel.setScenePhase(self.scenePhase)
+                self.appDelegate.appModel = self.appModel
+                self.appDelegate.scenePhaseChanged(self.scenePhase)
+                self.applyWindowTint()
+                self.gatewayController.setScenePhase(self.scenePhase)
+                #if DEBUG
+                if Self.liveActivityVoicePreviewEnabled {
+                    LiveActivityManager.shared.startVoicePreview()
                 }
+                #endif
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification),
+                perform: { _ in
+                    OpenClawType.refreshUIKitAppearance(in: Self.connectedWindows())
+                })
+            .onOpenURL { url in
+                // SwiftUI owns normal scene delivery; the delegate also queues URLs
+                // that arrive before the scene has installed its model.
+                Task { await self.appDelegate.handleOpenURL(url, model: self.appModel) }
+            }
+            .onChange(of: self.scenePhase) { _, newValue in
+                self.appModel.setScenePhase(newValue)
+                self.gatewayController.setScenePhase(newValue)
+                self.appDelegate.scenePhaseChanged(newValue)
+                self.applyWindowTint()
+            }
         }
     }
 
     private static var screenshotModeEnabled: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--openclaw-screenshot-mode")
+            || ProcessInfo.processInfo.arguments.contains("--pear-ols-screenshot")
         #else
         false
         #endif
