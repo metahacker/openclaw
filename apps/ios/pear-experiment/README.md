@@ -1,6 +1,8 @@
 # PEAR One Living Surface experiment
 
-This is the isolated PEAR fork of current OpenClaw iOS, not the upstream App Store release. `release.json` binds its existing app/team, source baseline, marketing version, experiment branch, and beta notes. App icon and `PearMark` are the exact approved full PEAR mark from the previous fork; they are not regenerated.
+This is the isolated PEAR fork of current OpenClaw iOS, not the upstream App Store release. `release.json` binds the separate **PEAR MVP** app (`bundleId`, `appId`, `teamId`), source baseline, marketing version, experiment branch, and beta notes. App icon and `PearMark` are the exact approved full PEAR mark from the previous fork; they are not regenerated.
+
+The experiment never ships into the original PEAR app (App Store Connect app `6759186465`). The release identity is source-controlled in `release.json`; the `IOS_BUNDLE_ID` secret still names the original app and is used only as a forbidden value. `prepare.py`, `verify-ipa.py`, and `PearOLSFastfile` fail closed while `appId` is empty, when it equals the original app, or when the bundle matches the original bundle. Build numbering starts fresh on the new app record.
 
 ## One entry, no fallback
 
@@ -14,7 +16,7 @@ The current upstream uploader cannot accept this app as configuration alone: it 
 
 - The secretless job builds current native iOS plus its unchanged target graph, runs `PearOLSTimelineTests` and `PearOLSUITests`, then captures the `--pear-ols-screenshot` synthetic surface on iPhone and 13-inch iPad.
 - Proof is bound by full source SHA and screenshot hashes. Runtime mock/synthetic screenshots are explicitly not authenticated-device evidence.
-- Release verifies existing App Store Connect app ID against the protected bundle identifier and the recorded metahack team. It does not create an app, tester, or group.
+- Release verifies the `release.json` App Store Connect app ID carries the PEAR MVP bundle identifier and the recorded metahack team. It does not create an app, tester, or group; the internal `PEAR Team` group must already exist on the PEAR MVP app.
 - Every Apple `buildUploads` attempt, including failed attempts, consumes its number. Unknown or in-flight upload state fails closed. Allocation is reread just before the only upload attempt; the existing PEAR distribution workflow concurrency group serializes runs and never cancels an uploader.
 - The lane assigns only an existing internal `PEAR Team` (or historic `Internal Testers`) group, never an external group; it verifies `VALID`, `IN_BETA_TESTING`, and group assignment independently. No App Review, external Beta Review, public-link creation, or public metadata update occurs.
 - A failed upload/verification leaves `release-receipt.json` with its last verified stage. Reconcile the exact Apple state before a new run; never equate a green archive with TestFlight readiness.

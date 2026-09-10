@@ -139,9 +139,10 @@ struct OLSClient: OLSService {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         let name = url.lastPathComponent.replacingOccurrences(of: "\"", with: "_")
             .replacingOccurrences(of: "\r", with: "_").replacingOccurrences(of: "\n", with: "_")
-        var body = Data(
-            "--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-                .utf8)
+        let header = "--\(boundary)\r\n"
+            + "Content-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\n"
+            + "Content-Type: application/octet-stream\r\n\r\n"
+        var body = Data(header.utf8)
         body.append(data)
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         request.httpBody = body

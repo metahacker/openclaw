@@ -417,7 +417,8 @@ private enum OLSArtifactDownload {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pear-ols-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: false,
+            at: directory,
+            withIntermediateDirectories: false,
             attributes: [.protectionKey: FileProtectionType.complete, .posixPermissions: 0o700])
         let destination = directory.appendingPathComponent(name)
         do {

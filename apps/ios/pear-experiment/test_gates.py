@@ -49,6 +49,35 @@ class ExperimentAdmissionTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 gate.verify(dict(env, **{field: bad}), sha, config)
 
+    def test_release_identity_is_the_separate_pear_mvp_app(self):
+        prepare = module("prepare")
+        verify_ipa = module("verify-ipa")
+        config = {"appId": "1234567890", "bundleId": "io.metahack.pear.mvp", "teamId": "7TWXNL6G85"}
+        legacy_env = {"IOS_DEVELOPMENT_TEAM": "7TWXNL6G85", "IOS_BUNDLE_ID": "io.metahack.pear.legacy"}
+        self.assertEqual(prepare.release_identity(config, legacy_env, simulator=False), ("io.metahack.pear.mvp", "7TWXNL6G85"))
+        self.assertEqual(prepare.release_identity(config, {}, simulator=True), (prepare.SIMULATOR_BUNDLE, "7TWXNL6G85"))
+        self.assertEqual(verify_ipa.expected_bundle_id(config, legacy_env), "io.metahack.pear.mvp")
+        self.assertEqual(prepare.DISPLAY_NAME, "PEAR MVP")
+        self.assertEqual(verify_ipa.DISPLAY_NAME, "PEAR MVP")
+        collisions = [
+            dict(legacy_env, IOS_BUNDLE_ID="io.metahack.pear.mvp"),
+            dict(legacy_env, IOS_DEVELOPMENT_TEAM="OTHERTEAM1"),
+        ]
+        for env in collisions:
+            with self.subTest(env=env), self.assertRaises(ValueError):
+                prepare.release_identity(config, env, simulator=False)
+        with self.assertRaises(ValueError):
+            verify_ipa.expected_bundle_id(config, dict(legacy_env, IOS_BUNDLE_ID="io.metahack.pear.mvp"))
+        for bad in [dict(config, appId=prepare.LEGACY_PEAR_APP_ID), dict(config, bundleId=""), dict(config, bundleId="ai.openclawfoundation.app")]:
+            with self.subTest(config=bad), self.assertRaises(ValueError):
+                prepare.release_identity(bad, legacy_env, simulator=False)
+        with self.assertRaises(ValueError):
+            verify_ipa.expected_bundle_id(dict(config, bundleId=""), legacy_env)
+        # The committed release.json must already name the separate app, never the original.
+        committed = json.loads((Path(__file__).parent / "release.json").read_text())
+        self.assertEqual(committed["bundleId"], "io.metahack.pear.mvp")
+        self.assertNotEqual(committed["appId"], prepare.LEGACY_PEAR_APP_ID)
+
     def test_screenshots_bound_to_successful_exact_source(self):
         gate = module("verify-evidence")
         sha = "a" * 40

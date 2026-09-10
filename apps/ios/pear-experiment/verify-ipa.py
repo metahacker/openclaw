@@ -9,6 +9,20 @@ import subprocess
 import tempfile
 import zipfile
 
+DISPLAY_NAME = "PEAR MVP"
+
+
+def expected_bundle_id(config: dict, env: dict) -> str:
+    """The signed app must be the separate PEAR MVP app from release.json, never the
+    original PEAR app whose bundle still lives in the IOS_BUNDLE_ID secret."""
+    bundle = str(config.get("bundleId", ""))
+    if not bundle:
+        raise ValueError("release.json bundleId is required")
+    legacy = env.get("IOS_BUNDLE_ID", "")
+    if legacy and bundle == legacy:
+        raise ValueError("Signed IPA must not be the original PEAR app")
+    return bundle
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -16,7 +30,7 @@ def main():
     parser.add_argument("--build-number", required=True)
     args = parser.parse_args()
     config = json.loads((Path(__file__).parent / "release.json").read_text())
-    expected_bundle = os.environ["IOS_BUNDLE_ID"]
+    expected_bundle = expected_bundle_id(config, dict(os.environ))
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
         with zipfile.ZipFile(args.ipa) as archive:
@@ -30,7 +44,7 @@ def main():
             raise ValueError("IPA must contain one main application")
         app = apps[0]
         info = plistlib.loads((app / "Info.plist").read_bytes())
-        expected = {"CFBundleIdentifier": expected_bundle, "CFBundleDisplayName": "PEAR", "CFBundleShortVersionString": config["version"], "CFBundleVersion": args.build_number, "OpenClawGitCommit": os.environ["GITHUB_SHA"], "ITSAppUsesNonExemptEncryption": False}
+        expected = {"CFBundleIdentifier": expected_bundle, "CFBundleDisplayName": DISPLAY_NAME, "CFBundleShortVersionString": config["version"], "CFBundleVersion": args.build_number, "OpenClawGitCommit": os.environ["GITHUB_SHA"], "ITSAppUsesNonExemptEncryption": False}
         for key, value in expected.items():
             if info.get(key) != value:
                 raise ValueError(f"IPA identity mismatch: {key}")

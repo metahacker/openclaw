@@ -5,6 +5,9 @@ require "net/http"
 require "uri"
 
 module PearOLSRelease
+  # The original PEAR app. The experiment is a separate "PEAR MVP" app and never uploads here.
+  LEGACY_PEAR_APP_ID = "6759186465".freeze
+
   def self.config
     JSON.parse(File.read(File.expand_path("../pear-experiment/release.json", __dir__)))
   end
@@ -77,12 +80,19 @@ platform :ios do
     sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting")
     UI.user_error!("PEAR release source must be committed and clean") unless release_source_clean?
     UI.user_error!("PEAR developer team mismatch") unless ENV["IOS_DEVELOPMENT_TEAM"] == config.fetch("teamId")
-    %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT IOS_BUNDLE_ID].each { |name| UI.user_error!("Missing #{name}") if ENV[name].to_s.empty? }
+    %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT].each { |name| UI.user_error!("Missing #{name}") if ENV[name].to_s.empty? }
+    bundle_id = config.fetch("bundleId").to_s
+    app_id = config.fetch("appId").to_s
+    UI.user_error!("release.json bundleId is required") if bundle_id.empty?
+    UI.user_error!("release.json appId is empty: the PEAR MVP App Store Connect record does not exist yet") if app_id.empty?
+    UI.user_error!("Refusing to release into the original PEAR app") if app_id == PearOLSRelease::LEGACY_PEAR_APP_ID
+    UI.user_error!("Refusing to release into the original PEAR app bundle") if !ENV["IOS_BUNDLE_ID"].to_s.empty? && bundle_id == ENV["IOS_BUNDLE_ID"]
     private_key = ENV.fetch("ASC_KEY_CONTENT")
     private_key = private_key.include?("BEGIN PRIVATE KEY") ? private_key.gsub('\\n', "\n") : Base64.strict_decode64(private_key)
     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: private_key, is_key_content_base64: false)
-    app = Spaceship::ConnectAPI::App.get(app_id: config.fetch("appId"))
-    UI.user_error!("Stored bundle identifier does not match existing PEAR App Store Connect app") unless app.bundle_id == ENV.fetch("IOS_BUNDLE_ID")
+    app = Spaceship::ConnectAPI::App.get(app_id: app_id)
+    UI.user_error!("App Store Connect app does not carry the PEAR MVP bundle identifier") unless app.bundle_id == bundle_id
+    UI.user_error!("Resolved App Store Connect app is the original PEAR app") if app.id.to_s == PearOLSRelease::LEGACY_PEAR_APP_ID
     group = PearOLSRelease.internal_group(app)
     build_number = PearOLSRelease.next_build(app)
     plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, state: "prepared" }

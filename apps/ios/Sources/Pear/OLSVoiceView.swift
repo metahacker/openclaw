@@ -113,8 +113,11 @@ struct OLSVoiceView: View {
                                 .font(OLSTheme.body).textSelection(.enabled)
                             Button {
                                 guard !self.screenshotMode else { return }
-                                if self.voice.isSpeaking { self.voice.stop() }
-                                else if self.audioIsAvailable() { self.voice.speak(Self.readingText(reply.text)) }
+                                if self.voice.isSpeaking {
+                                    self.voice.stop()
+                                } else if self.audioIsAvailable() {
+                                    self.voice.speak(Self.readingText(reply.text))
+                                }
                             } label: {
                                 Label {
                                     Text(self.voice.isSpeaking ? "Stop reading" : "Read this reply")
@@ -209,7 +212,17 @@ private final class OLSVoiceCapture: NSObject, AVSpeechSynthesizerDelegate {
         if self.isAuthorizing { return "Waiting for permission…" }
         if self.isListening { return "Listening · tap to stop" }
         if self.isSpeaking { return "Reading your selected reply" }
+        if self.needsFirstPermission {
+            return "Tap to speak. iOS will ask once to use the microphone and speech recognition."
+        }
         return "Tap to speak. Send when you’re ready."
+    }
+
+    /// Just-in-time permissions: explain before the first system prompt, which only
+    /// happens after an explicit tap on the microphone button. These reads never prompt.
+    private var needsFirstPermission: Bool {
+        AVAudioApplication.shared.recordPermission != .granted
+            || SFSpeechRecognizer.authorizationStatus() != .authorized
     }
 
     func start(prefix: String) async {

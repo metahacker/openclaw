@@ -327,8 +327,10 @@ extension Data {
 
 private final class PearAuthRedirectPolicy: NSObject, URLSessionTaskDelegate {
     func urlSession(
-        _: URLSession, task _: URLSessionTask,
-        willPerformHTTPRedirection _: HTTPURLResponse, newRequest _: URLRequest,
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest _: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void)
     {
         completionHandler(nil)

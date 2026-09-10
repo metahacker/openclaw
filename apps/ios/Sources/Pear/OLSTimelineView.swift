@@ -132,8 +132,11 @@ struct OLSTimelineView: View {
             self.uploadError = nil
             Task {
                 defer { self.uploading = false }
-                do { try await self.model.attachments.append(OLSClient().upload(url)) }
-                catch { self.uploadError = error.localizedDescription }
+                do {
+                    try await self.model.attachments.append(OLSClient().upload(url))
+                } catch {
+                    self.uploadError = error.localizedDescription
+                }
             }
         }
     }

@@ -12,27 +12,44 @@ import yaml
 IOS = Path(__file__).resolve().parents[1]
 ROOT = IOS.parents[1]
 CONFIG = json.loads((IOS / "pear-experiment/release.json").read_text())
+SIMULATOR_BUNDLE = "io.metahack.pear.ols.validation"
+DISPLAY_NAME = "PEAR MVP"
+# The original PEAR app; this experiment ships as a separate app and must never build for it.
+LEGACY_PEAR_APP_ID = "6759186465"
+
+
+def release_identity(config: dict, env: dict, *, simulator: bool) -> tuple[str, str]:
+    """Resolve (bundle, team). The release identity is source-controlled in release.json;
+    env IOS_BUNDLE_ID belongs to the original PEAR app and is only used as a forbidden value."""
+    bundle = SIMULATOR_BUNDLE if simulator else str(config.get("bundleId", ""))
+    team = config["teamId"] if simulator else env.get("IOS_DEVELOPMENT_TEAM", "")
+    if team != config["teamId"] or bundle.startswith("ai.openclawfoundation."):
+        raise ValueError("PEAR experiment cannot use the upstream OpenClaw app/team")
+    if not re.fullmatch(r"[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+", bundle):
+        raise ValueError("Invalid bundle identifier")
+    if not simulator:
+        legacy = env.get("IOS_BUNDLE_ID", "")
+        if legacy and bundle == legacy:
+            raise ValueError("PEAR MVP must not build for the original PEAR app bundle")
+        if str(config.get("appId", "")) == LEGACY_PEAR_APP_ID:
+            raise ValueError("PEAR MVP must not target the original PEAR App Store Connect app")
+    return bundle, team
 
 
 def prepare(*, simulator: bool, build_number: str) -> Path:
     if not re.fullmatch(r"[1-9][0-9]*", build_number):
         raise ValueError("Build number must be a positive integer")
-    bundle = "io.metahack.pear.ols.validation" if simulator else os.environ["IOS_BUNDLE_ID"]
-    team = CONFIG["teamId"] if simulator else os.environ["IOS_DEVELOPMENT_TEAM"]
-    if team != CONFIG["teamId"] or bundle.startswith("ai.openclawfoundation."):
-        raise ValueError("PEAR experiment cannot use the upstream OpenClaw app/team")
-    if not re.fullmatch(r"[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+", bundle):
-        raise ValueError("Invalid bundle identifier")
+    bundle, team = release_identity(CONFIG, dict(os.environ), simulator=simulator)
 
     source = yaml.safe_load((IOS / "project.yml").read_text())
     project = json.loads(json.dumps(source))
     app = project["targets"]["OpenClaw"]
-    app["info"]["properties"]["CFBundleDisplayName"] = "PEAR"
+    app["info"]["properties"]["CFBundleDisplayName"] = DISPLAY_NAME
     app["info"]["properties"]["ITSAppUsesNonExemptEncryption"] = False
     for value in project["targets"].values():
         info = value.get("info", {}).get("properties", {})
         if isinstance(info.get("CFBundleDisplayName"), str):
-            info["CFBundleDisplayName"] = info["CFBundleDisplayName"].replace("OpenClaw", "PEAR")
+            info["CFBundleDisplayName"] = info["CFBundleDisplayName"].replace("OpenClaw", DISPLAY_NAME)
     for config in ("Debug", "Release"):
         settings = app["settings"]["configs"].setdefault(config, {})
         settings["ASSETCATALOG_COMPILER_APPICON_NAME"] = "AppIcon"

@@ -156,7 +156,9 @@ final class OLSModel {
         defer { if self.generation == generation { self.isSending = false } }
         do {
             let receipt = try await self.service.send(
-                text: attempt.text, requestID: attempt.requestID, projectID: attempt.projectID,
+                text: attempt.text,
+                requestID: attempt.requestID,
+                projectID: attempt.projectID,
                 attachments: attempt.attachments)
             guard self.generation == generation else { return }
             guard receipt.ok else {
@@ -243,7 +245,8 @@ final class OLSModel {
             OLSMessage(
                 id: "2",
                 role: "assistant",
-                text: "The morning plan still fits. Saturday afternoon stays open, and the plant list is ready when you want it.",
+                text: "The morning plan still fits. Saturday afternoon stays open, "
+                    + "and the plant list is ready when you want it.",
                 createdAt: "2026-09-09T10:01:00Z",
                 context: context),
             OLSMessage(
