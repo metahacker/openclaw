@@ -214,6 +214,7 @@ struct OLSRootView: View {
                                 Text(context.hashtag).font(OLSTheme.chip).foregroundStyle(OLSTheme.secondary)
                             }
                         }
+                        .accessibilityIdentifier("ols.moment.\(context.segmentId)")
                     }
                 } header: { Text("Return to a moment").font(OLSTheme.caption) }
                 Section {
@@ -228,6 +229,7 @@ struct OLSRootView: View {
                             self.showContext = false
                             self.navigate(.chat)
                         } label: { Text(project.name).font(OLSTheme.label) }
+                            .accessibilityIdentifier("ols.talk-about.\(project.id)")
                     }
                 } header: { Text("Talk about").font(OLSTheme.caption) }
             }

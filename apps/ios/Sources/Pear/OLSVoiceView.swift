@@ -82,7 +82,10 @@ struct OLSVoiceView: View {
                             text: self.$model.draft,
                             prompt: Text("Your words appear here…").font(OLSTheme.body),
                             axis: .vertical)
-                            .font(OLSTheme.body).lineLimit(3...12)
+                            .font(OLSTheme.body)
+                            .textFieldStyle(.plain)
+                            .lineLimit(3...12)
+                            .fixedSize(horizontal: false, vertical: true)
                             .disabled(self.voice.isListening)
                             .accessibilityLabel("Your message")
                         Button {

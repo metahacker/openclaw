@@ -289,7 +289,7 @@ private struct OLSArtifactWebView: UIViewRepresentable {
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void)
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void)
         {
             guard let url = navigationAction.request.url, Self.allowed(url) else {
                 decisionHandler(.cancel)
@@ -308,7 +308,7 @@ private struct OLSArtifactWebView: UIViewRepresentable {
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationResponse: WKNavigationResponse,
-            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void)
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void)
         {
             if let response = navigationResponse.response as? HTTPURLResponse, response.statusCode >= 400 {
                 self.error.wrappedValue = response.statusCode == 401 || response.statusCode == 403
@@ -448,7 +448,7 @@ private final class OLSArtifactRedirectPolicy: NSObject, URLSessionTaskDelegate,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
         newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void)
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void)
     {
         guard let url = request.url, url.scheme?.lowercased() == "https",
               url.user == nil, url.password == nil

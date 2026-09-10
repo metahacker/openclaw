@@ -115,6 +115,7 @@ struct OLSProjectsView: View {
                     }
                     .frame(minHeight: 44)
                 }
+                .accessibilityIdentifier("ols.projects.return")
                 Spacer()
                 if self.inspecting != nil {
                     Button(action: self.onReturn) {

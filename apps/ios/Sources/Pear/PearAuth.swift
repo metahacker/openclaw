@@ -331,7 +331,7 @@ private final class PearAuthRedirectPolicy: NSObject, URLSessionTaskDelegate {
         task _: URLSessionTask,
         willPerformHTTPRedirection _: HTTPURLResponse,
         newRequest _: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void)
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void)
     {
         completionHandler(nil)
     }

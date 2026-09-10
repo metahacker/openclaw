@@ -193,7 +193,7 @@ private final class OLSRedirectPolicy: NSObject, URLSessionTaskDelegate {
         task _: URLSessionTask,
         willPerformHTTPRedirection _: HTTPURLResponse,
         newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void)
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void)
     {
         guard request.url?.scheme == "https", request.url?.host == OLSClient.baseURL.host else {
             completionHandler(nil)

@@ -78,7 +78,9 @@ struct OLSTimelineView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 90
-                } action: { _, nearBottom in self.model.isAtPresent = nearBottom }
+                } action: { _, nearBottom in
+                    if self.model.isAtPresent != nearBottom { self.model.isAtPresent = nearBottom }
+                }
                 .onChange(of: self.model.messages.last?.id) { _, _ in
                     guard self.model.isAtPresent else { return }
                     withAnimation(self.reduceMotion ? nil : .easeOut(duration: 0.2)) {
@@ -133,7 +135,8 @@ struct OLSTimelineView: View {
             Task {
                 defer { self.uploading = false }
                 do {
-                    try await self.model.attachments.append(OLSClient().upload(url))
+                    let attachment = try await OLSClient().upload(url)
+                    self.model.attachments.append(attachment)
                 } catch {
                     self.uploadError = error.localizedDescription
                 }
@@ -213,7 +216,11 @@ struct OLSTimelineView: View {
                     prompt: Text("Type a message…").font(OLSTheme.body),
                     axis: .vertical)
                     .font(OLSTheme.body)
+                    .textFieldStyle(.plain)
                     .lineLimit(1...5)
+                    // Upstream ChatComposer sizes its vertical field this way; without it the
+                    // growing field can re-layout forever once it has content.
+                    .fixedSize(horizontal: false, vertical: true)
                     .focused(self.$composerFocused)
                     .padding(.vertical, 11)
                     .accessibilityLabel("Message")

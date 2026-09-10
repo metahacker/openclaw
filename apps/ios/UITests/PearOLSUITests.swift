@@ -15,10 +15,14 @@ final class PearOLSUITests: XCTestCase {
         composer.tap()
         composer.typeText("Keep my place")
         app.buttons["ols.projects"].tap()
-        XCTAssertTrue(app.staticTexts["Weekend garden"].waitForExistence(timeout: 5))
         // The whole Projects room has a visible return path; gestures are optional.
-        let back = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'chat'")).firstMatch
-        XCTAssertTrue(back.exists)
+        let back = app.buttons["ols.projects.return"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        XCTAssertTrue(back.isHittable)
+        // Project cards are Buttons; the chat surface keeps an inline card with the same
+        // label underneath, so require one that is actually on screen.
+        let cards = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Weekend garden'"))
+        XCTAssertTrue(cards.allElementsBoundByIndex.contains { $0.isHittable })
         back.tap()
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertEqual(composer.value as? String, "Keep my place")
@@ -34,9 +38,10 @@ final class PearOLSUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["ols.context"].waitForExistence(timeout: 15))
         app.buttons["ols.context"].tap()
-        let anchor = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'Weekend garden'")).firstMatch
-        XCTAssertTrue(anchor.waitForExistence(timeout: 5))
-        anchor.tap()
+        // The timeline card under the sheet shares the label, so target the sheet row.
+        let moment = app.buttons["ols.moment.sample-garden"]
+        XCTAssertTrue(moment.waitForExistence(timeout: 5))
+        moment.tap()
         XCTAssertTrue(app.buttons["ols.anchor.sample-garden"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Talking about'")).firstMatch.exists)
     }
