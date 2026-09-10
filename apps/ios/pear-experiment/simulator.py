@@ -17,6 +17,65 @@ def run(*args: str) -> None:
     subprocess.run(args, cwd=ROOT, check=True)
 
 
+def app_pid() -> int | None:
+    """Simulator apps are host processes; find the app under test by its bundle path."""
+    listing = subprocess.run(["ps", "-axo", "pid=,%cpu=,comm="], capture_output=True, text=True).stdout
+    for line in listing.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and parts[2].endswith("/OpenClaw.app/OpenClaw"):
+            return int(parts[0])
+    return None
+
+
+def cpu_percent(pid: int) -> float:
+    out = subprocess.run(["ps", "-o", "%cpu=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0
+
+
+def collect_app_log(udid: str, target: Path) -> None:
+    """The app's own stdout/stderr is lost when XCTest kills a hung process; the unified
+    log still has its SwiftUI runtime issues and os_log output."""
+    with target.open("w") as handle:
+        subprocess.run(
+            ["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "10m", "--style", "compact",
+             "--predicate", 'process == "OpenClaw" OR subsystem == "com.apple.runtime-issues"'],
+            stdout=handle, stderr=subprocess.STDOUT, check=False)
+
+
+def run_sampling_busy_main_thread(args: list[str], label: str, udid: str) -> None:
+    """Run xcodebuild while watching the app under test. If it pegs a core for a sustained
+    period (a stuck main thread makes XCTest report "main thread busy"), capture a `sample`
+    into the evidence directory so the hang can be diagnosed without a local Xcode."""
+    process = subprocess.Popen(args, cwd=ROOT)
+    busy_ticks = 0
+    captures = 0
+    try:
+        while process.poll() is None:
+            time.sleep(5)
+            pid = app_pid()
+            if pid is None:
+                busy_ticks = 0
+                continue
+            busy_ticks = busy_ticks + 1 if cpu_percent(pid) >= 80 else 0
+            if busy_ticks >= 3 and captures < 2:
+                captures += 1
+                busy_ticks = 0
+                target = EVIDENCE / f"{label}-busy-sample-{captures}.txt"
+                subprocess.run(["sample", str(pid), "8", "-mayDie", "-file", str(target)], check=False)
+                if not target.exists() or target.stat().st_size < 2000:
+                    # sample cannot always attach on hosted runners; spindump needs root there.
+                    subprocess.run(["sudo", "spindump", str(pid), "5", "-file", str(target)], check=False)
+    finally:
+        if process.poll() is None:
+            process.wait()
+    if process.returncode != 0:
+        collect_app_log(udid, EVIDENCE / f"{label}-app-log.txt")
+        raise subprocess.CalledProcessError(process.returncode, args)
+
+
 def main() -> None:
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"], text=True))["devices"]
@@ -37,7 +96,7 @@ def main() -> None:
             run("xcrun", "simctl", "boot", udid)
         run("xcrun", "simctl", "bootstatus", udid, "-b")
         args = ["xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / f"{family}.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawUITests/PearOLSUITests", "CODE_SIGNING_ALLOWED=NO", "test"]
-        run(*args)
+        run_sampling_busy_main_thread(args, f"{family}-uitest", udid)
         if family == "iphone":
             run("xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClaw", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / "logic.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawTests/PearOLSTimelineTests", "CODE_SIGNING_ALLOWED=NO", "test")
         app = DERIVED / "Build/Products/Debug-iphonesimulator/OpenClaw.app"
