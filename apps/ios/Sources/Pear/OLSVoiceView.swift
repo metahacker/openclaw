@@ -77,17 +77,22 @@ struct OLSVoiceView: View {
 
                 OLSCard {
                     VStack(alignment: .leading, spacing: 16) {
-                        TextField(
-                            "",
-                            text: self.$model.draft,
-                            prompt: Text("Your words appear here…").font(OLSTheme.body),
-                            axis: .vertical)
-                            .font(OLSTheme.body)
-                            .textFieldStyle(.plain)
-                            .lineLimit(3...12)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .disabled(self.voice.isListening)
-                            .accessibilityLabel("Your message")
+                        ZStack(alignment: .topLeading) {
+                            if self.model.draft.isEmpty {
+                                Text("Your words appear here…")
+                                    .font(OLSTheme.body)
+                                    .foregroundStyle(OLSTheme.secondary)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                            OLSTextView(
+                                text: self.$model.draft,
+                                minLines: 3,
+                                maxLines: 12,
+                                isEnabled: !self.voice.isListening,
+                                accessibilityLabel: "Your message",
+                                accessibilityIdentifier: "ols.voice.draft")
+                        }
                         Button {
                             guard !self.screenshotMode else { return }
                             self.voice.stop()

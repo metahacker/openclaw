@@ -9,7 +9,7 @@ struct OLSTimelineView: View {
     let openVoice: () -> Void
     let openProjects: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocused = false
     @State private var artifact: Artifact?
     @State private var showImporter = false
     @State private var uploading = false
@@ -82,10 +82,12 @@ struct OLSTimelineView: View {
                 .onAppear { self.applyScrollRequest(proxy) }
                 .onChange(of: self.model.scrollRequest) { _, _ in self.applyScrollRequest(proxy) }
                 .onChange(of: self.model.messages.count) { _, _ in self.applyScrollRequest(proxy) }
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 90
-                } action: { _, nearBottom in
-                    if self.model.isAtPresent != nearBottom { self.model.isAtPresent = nearBottom }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentSize.height - (geometry.contentOffset.y + geometry.containerSize.height)
+                } action: { _, distance in
+                    // Hysteresis: a few points of keyboard-layout wobble must not toggle state.
+                    let atPresent = distance <= (self.model.isAtPresent ? 160 : 60)
+                    if self.model.isAtPresent != atPresent { self.model.isAtPresent = atPresent }
                 }
                 .onChange(of: self.model.messages.last?.id) { _, _ in
                     guard self.model.isAtPresent else { return }
@@ -225,21 +227,23 @@ struct OLSTimelineView: View {
                     Image(systemName: self.uploading ? "hourglass" : "plus")
                         .font(.system(size: 19)).frame(width: 44, height: 44)
                 }.accessibilityLabel("Add a file").disabled(self.uploading)
-                TextField(
-                    "",
-                    text: self.$model.draft,
-                    prompt: Text("Type a message…").font(OLSTheme.body),
-                    axis: .vertical)
-                    .font(OLSTheme.body)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...5)
-                    // Upstream ChatComposer sizes its vertical field this way; without it the
-                    // growing field can re-layout forever once it has content.
-                    .fixedSize(horizontal: false, vertical: true)
-                    .focused(self.$composerFocused)
-                    .padding(.vertical, 11)
-                    .accessibilityLabel("Message")
-                    .accessibilityIdentifier("ols.composer")
+                ZStack(alignment: .topLeading) {
+                    if self.model.draft.isEmpty {
+                        Text("Type a message…")
+                            .font(OLSTheme.body)
+                            .foregroundStyle(OLSTheme.secondary)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                    OLSTextView(
+                        text: self.$model.draft,
+                        minLines: 1,
+                        maxLines: 5,
+                        accessibilityLabel: "Message",
+                        accessibilityIdentifier: "ols.composer",
+                        onFocusChange: { self.composerFocused = $0 })
+                }
+                .padding(.vertical, 11)
                 Button(action: self.openVoice) {
                     Image(systemName: "mic").font(.system(size: 18)).frame(width: 36, height: 44)
                 }

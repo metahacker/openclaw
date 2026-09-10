@@ -20,6 +20,12 @@ enum OLSTheme {
     static let caption = Font.custom("Inter", size: 12, relativeTo: .caption)
     static let chip = Font.custom("JetBrainsMono-Regular", size: 12, relativeTo: .caption)
 
+    /// UIKit twin of `body` for the UITextView-backed editors.
+    static var bodyUIFont: UIFont {
+        let base = UIFont(name: "Inter-Regular", size: 17) ?? UIFont.systemFont(ofSize: 17)
+        return UIFontMetrics(forTextStyle: .body).scaledFont(for: base)
+    }
+
     private static func color(_ light: UInt32, dark: UInt32) -> Color {
         Color(UIColor { trait in
             let rgb = trait.userInterfaceStyle == .dark ? dark : light
