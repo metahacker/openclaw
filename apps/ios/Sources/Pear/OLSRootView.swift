@@ -204,10 +204,11 @@ struct OLSRootView: View {
                         Button {
                             self.showContext = false
                             self.navigate(.chat)
-                            self.model.isAtPresent = false
-                            self.model.visibleMessageID = self.model.messages.first(where: {
+                            if let id = self.model.messages.first(where: {
                                 $0.context?.segmentId == context.segmentId
-                            })?.id
+                            })?.id {
+                                self.model.jump(to: id)
+                            }
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(context.label ?? context.hashtag).font(OLSTheme.label)

@@ -25,6 +25,17 @@ final class OLSModel {
 
     var isAtPresent = true
 
+    /// One-shot request for the timeline to bring a message to the top. Explicit jumps
+    /// (restoring a saved place, choosing a moment) go through here rather than a two-way
+    /// scrollPosition binding: that binding re-anchors on every layout pass and, once the
+    /// composer changes height under the keyboard, spins the main thread indefinitely.
+    struct ScrollRequest: Equatable {
+        let messageID: String
+        let token: UUID
+    }
+
+    private(set) var scrollRequest: ScrollRequest?
+
     @ObservationIgnored private let service: any OLSService
     @ObservationIgnored private var beforeCursor: String?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
@@ -47,10 +58,24 @@ final class OLSModel {
            let saved = try? JSONDecoder().decode(SavedPlace.self, from: data)
         {
             self.draft = saved.draft
-            self.visibleMessageID = saved.messageID
-            self.isAtPresent = saved.messageID == nil
+            if let messageID = saved.messageID {
+                self.jump(to: messageID)
+            } else {
+                self.visibleMessageID = nil
+                self.isAtPresent = true
+            }
         }
         self.storageKey = key
+    }
+
+    func jump(to messageID: String) {
+        self.isAtPresent = false
+        self.visibleMessageID = messageID
+        self.scrollRequest = ScrollRequest(messageID: messageID, token: UUID())
+    }
+
+    func completeScrollRequest(_ request: ScrollRequest) {
+        if self.scrollRequest == request { self.scrollRequest = nil }
     }
 
     private func savePlace() {
@@ -215,6 +240,7 @@ final class OLSModel {
         self.sendStatus = nil
         self.error = nil
         self.visibleMessageID = nil
+        self.scrollRequest = nil
         self.hasMore = false
     }
 

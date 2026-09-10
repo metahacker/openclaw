@@ -74,8 +74,14 @@ struct OLSTimelineView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .accessibilityIdentifier("ols.timeline")
-                .scrollPosition(id: self.$model.visibleMessageID, anchor: .top)
                 .scrollDismissesKeyboard(.interactively)
+                .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
+                    guard let first = ids.first(where: { $0 != "ols-bottom" }) else { return }
+                    if self.model.visibleMessageID != first { self.model.visibleMessageID = first }
+                }
+                .onAppear { self.applyScrollRequest(proxy) }
+                .onChange(of: self.model.scrollRequest) { _, _ in self.applyScrollRequest(proxy) }
+                .onChange(of: self.model.messages.count) { _, _ in self.applyScrollRequest(proxy) }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 90
                 } action: { _, nearBottom in
@@ -142,6 +148,15 @@ struct OLSTimelineView: View {
                 }
             }
         }
+    }
+
+    /// Requests wait until the message is loaded; pagination may deliver it later.
+    private func applyScrollRequest(_ proxy: ScrollViewProxy) {
+        guard let request = self.model.scrollRequest,
+              self.model.messages.contains(where: { $0.id == request.messageID })
+        else { return }
+        proxy.scrollTo(request.messageID, anchor: .top)
+        self.model.completeScrollRequest(request)
     }
 
     private var emptyState: some View {
