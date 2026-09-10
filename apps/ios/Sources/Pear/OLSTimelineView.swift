@@ -27,7 +27,11 @@ struct OLSTimelineView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                    // Not lazy: a lazy stack's estimated content frame changes with the scroll
+                    // offset, and the scroll view re-aligns its offset to that frame on every
+                    // pass (UIKit's layout-feedback-loop debugger shows up in CI samples). A
+                    // page of messages is small enough to lay out eagerly.
+                    VStack(alignment: .leading, spacing: 14) {
                         if self.model.hasMore {
                             Button {
                                 Task { await self.model.loadEarlier() }

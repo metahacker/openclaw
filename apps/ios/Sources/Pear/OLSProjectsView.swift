@@ -153,7 +153,7 @@ struct OLSProjectsView: View {
 
     private var projectList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 18) {
                 Text("Projects")
                     .font(OLSTheme.title)
                     .foregroundStyle(OLSTheme.ink)
