@@ -270,7 +270,10 @@ platform :ios do
     ios = File.join(root, "apps/ios")
     evidence = File.join(ios, "build/pear-ols-evidence")
     sh("python3", File.join(ios, "pear-experiment/verify-gate.py"))
-    sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting")
+    provision_only = ENV["PEAR_OLS_PROVISION_ONLY"] == "true"
+    FileUtils.mkdir_p(evidence)
+    # Provision-only runs never archive or upload, so the exact-SHA proof gate stays with uploads.
+    sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting") unless provision_only
     unless release_source_clean?
       dirty, = Open3.capture3("git", "status", "--porcelain=v1", "--untracked-files=all", chdir: root)
       UI.error("Unclean paths (release refuses to archive):\n#{dirty}")

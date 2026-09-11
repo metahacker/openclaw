@@ -34,6 +34,7 @@ env:
 jobs:
   validate:
     name: Native OLS simulator and interaction proof
+    if: inputs.provision_only != true
     runs-on: macos-26
     timeout-minutes: 100
     steps:
@@ -85,7 +86,8 @@ jobs:
   release:
     name: Signed PEAR archive and verified internal TestFlight
     needs: validate
-    if: inputs.upload == true || inputs.provision_only == true
+    # Uploads need the exact-SHA proof from validate; provision-only runs skip it.
+    if: ${{ !cancelled() && ((inputs.upload == true && needs.validate.result == 'success') || (inputs.provision_only == true && inputs.upload != true)) }}
     runs-on: macos-26
     timeout-minutes: 150
     steps:
@@ -98,10 +100,12 @@ jobs:
         run: python3 apps/ios/pear-experiment/verify-gate.py
       - uses: ./.github/actions/pear-ios-ols-setup
       - uses: actions/download-artifact@v4
+        if: inputs.provision_only != true
         with:
           name: pear-ols-proof-${{ github.sha }}
           path: apps/ios/build/pear-ols-evidence/
       - name: Verify inherited source and screenshot proof
+        if: inputs.provision_only != true
         run: python3 apps/ios/pear-experiment/verify-evidence.py apps/ios/build/pear-ols-evidence "$GITHUB_SHA" --require-committed-formatting
       - name: Release through the supported upload entry point
         env:
@@ -116,6 +120,13 @@ jobs:
           MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
           PEAR_OLS_PROVISION_ONLY: ${{ inputs.provision_only }}
         run: pnpm ios:release:upload
+      - name: Probe Xcode automatic-signing authentication (provision-only)
+        if: inputs.provision_only == true
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: python3 apps/ios/pear-experiment/xcode-auth-probe.py
       - name: Preserve exact-build distribution receipt
         if: always()
         uses: actions/upload-artifact@v4
@@ -124,5 +135,6 @@ jobs:
           path: |
             apps/ios/build/pear-ols-evidence/release-receipt.json
             apps/ios/build/pear-ols-evidence/archive-log.txt
+            apps/ios/build/pear-ols-evidence/xcode-auth-probe.json
           if-no-files-found: warn
           retention-days: 30
