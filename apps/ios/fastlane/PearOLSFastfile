@@ -176,6 +176,17 @@ module PearOLSRelease
     rescue StandardError => error
       { error: error.message[/HTTP (\d+)/, 1] || "error" }
     end
+    facts[:developmentCertificates] = begin
+      data = request("GET", "/v1/certificates?filter[certificateType]=DEVELOPMENT,IOS_DEVELOPMENT&limit=200")
+      (data["data"] || []).map do |c|
+        a = c["attributes"] || {}
+        email = a["requesterEmail"].to_s
+        { name: a["displayName"].to_s[0, 40], type: a["certificateType"], expires: a["expirationDate"].to_s[0, 10],
+          requester: email.empty? ? nil : "#{email[0, 2]}…@#{email.split("@").last}" }
+      end
+    rescue StandardError => error
+      { error: error.message[/HTTP (\d+)/, 1] || "error" }
+    end
     facts[:appStoreProfiles] = begin
       data = request("GET", "/v1/profiles?filter[profileType]=IOS_APP_STORE&limit=200")
       (data["data"] || []).map { |pr| { name: pr.dig("attributes", "name").to_s, state: pr.dig("attributes", "profileState") } }
