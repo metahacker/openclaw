@@ -18,6 +18,11 @@ on:
         required: false
         default: false
         type: boolean
+      xcode_auth_probe:
+        description: With provision_only, also archive a trivial app to probe Xcode signing (consumes a development-certificate slot)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -120,8 +125,8 @@ jobs:
           MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
           PEAR_OLS_PROVISION_ONLY: ${{ inputs.provision_only }}
         run: pnpm ios:release:upload
-      - name: Probe Xcode automatic-signing authentication (provision-only)
-        if: inputs.provision_only == true
+      - name: Probe Xcode automatic-signing authentication (provision-only, opt-in)
+        if: inputs.provision_only == true && inputs.xcode_auth_probe == true
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
