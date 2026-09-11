@@ -13,6 +13,11 @@ on:
         required: true
         default: false
         type: boolean
+      provision_only:
+        description: Record signing evidence and register missing App IDs/capabilities with the existing key; no archive or upload
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -80,7 +85,7 @@ jobs:
   release:
     name: Signed PEAR archive and verified internal TestFlight
     needs: validate
-    if: inputs.upload == true
+    if: inputs.upload == true || inputs.provision_only == true
     runs-on: macos-26
     timeout-minutes: 150
     steps:
@@ -108,6 +113,8 @@ jobs:
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
           # Read-only inventory of the existing match store; never printed.
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
+          PEAR_OLS_PROVISION_ONLY: ${{ inputs.provision_only }}
         run: pnpm ios:release:upload
       - name: Preserve exact-build distribution receipt
         if: always()

@@ -133,19 +133,110 @@ module PearOLSRelease
   # File names inside the match git store (certificate and profile inventory only).
   def self.match_store_inventory
     auth = ENV["MATCH_GIT_BASIC_AUTHORIZATION"].to_s
-    return { available: false, reason: "no MATCH_GIT_BASIC_AUTHORIZATION" } if auth.empty?
-    Dir.mktmpdir("pear-match-") do |dir|
-      _out, _err, status = Open3.capture3(
-        "git", "-c", "http.extraheader=AUTHORIZATION: basic #{auth}", "clone", "--depth", "1", "--quiet",
-        "https://github.com/metahacker/fastlane-certs", dir
-      )
-      return { available: false, reason: "clone failed" } unless status.success?
-      entries = Dir.glob(File.join(dir, "**", "*")).select { |path| File.file?(path) }
-      names = entries.map { |path| path.delete_prefix("#{dir}/") }.reject { |name| name.start_with?(".git") }.sort
-      { available: true, files: names.map { |name| name.gsub(/[0-9A-Z]{8,}/, "<id>") } }
+    pat = ENV["MATCH_GIT_PAT"].to_s
+    secrets = [auth, pat].reject(&:empty?)
+    attempts = []
+    attempts << ["basic-header", ["git", "-c", "http.extraheader=AUTHORIZATION: basic #{auth}", "clone", "--depth", "1", "--quiet", "https://github.com/metahacker/fastlane-certs"]] unless auth.empty?
+    attempts << ["pat-url", ["git", "clone", "--depth", "1", "--quiet", "https://x-access-token:#{pat}@github.com/metahacker/fastlane-certs"]] unless pat.empty?
+    return { available: false, reason: "no MATCH_GIT_BASIC_AUTHORIZATION or MATCH_GIT_PAT" } if attempts.empty?
+    failures = {}
+    attempts.each do |label, command|
+      Dir.mktmpdir("pear-match-") do |dir|
+        _out, err, status = Open3.capture3(*command, dir)
+        if status.success?
+          entries = Dir.glob(File.join(dir, "**", "*")).select { |path| File.file?(path) }
+          names = entries.map { |path| path.delete_prefix("#{dir}/") }.reject { |name| name.start_with?(".git") }.sort
+          return { available: true, method: label, files: names.map { |name| name.gsub(/[0-9A-Z]{8,}/, "<id>") } }
+        end
+        reason = err.to_s.lines.map(&:strip).reject(&:empty?).last.to_s
+        secrets.each { |value| reason = reason.gsub(value, "<redacted>") }
+        failures[label] = reason.gsub(%r{https://[^\s]+}, "<url>")[0, 160]
+      end
     end
+    { available: false, failures: failures }
   rescue StandardError => error
     { available: false, reason: error.class.to_s }
+  end
+  rescue StandardError => error
+    { available: false, reason: error.class.to_s }
+  end
+
+  def self.status_of(path)
+    request("GET", path)
+    "200"
+  rescue StandardError => error
+    error.message[/HTTP (\d+)/, 1] || "error"
+  end
+
+  # Role/type evidence for the existing key, without identifiers: the users endpoint
+  # answers only for Admin/Account Holder keys; certificate and profile inventories
+  # show what manual signing could reuse.
+  def self.key_role_facts(bundle_prefix)
+    facts = { usersEndpoint: status_of("/v1/users?limit=1") }
+    facts[:distributionCertificates] = begin
+      data = request("GET", "/v1/certificates?filter[certificateType]=IOS_DISTRIBUTION,DISTRIBUTION&limit=50")
+      (data["data"] || []).map { |c| { type: c.dig("attributes", "certificateType"), expires: c.dig("attributes", "expirationDate").to_s[0, 10] } }
+    rescue StandardError => error
+      { error: error.message[/HTTP (\d+)/, 1] || "error" }
+    end
+    facts[:appStoreProfiles] = begin
+      data = request("GET", "/v1/profiles?filter[profileType]=IOS_APP_STORE&limit=200")
+      (data["data"] || []).map { |pr| { name: pr.dig("attributes", "name").to_s, state: pr.dig("attributes", "profileState") } }
+        .select { |pr| pr[:name].include?(bundle_prefix) }
+    rescue StandardError => error
+      { error: error.message[/HTTP (\d+)/, 1] || "error" }
+    end
+    facts
+  end
+
+  # Registrations the existing key is already authorized to make through the public
+  # API: missing companion App IDs and the capabilities the entitlements declare.
+  # Every write records its HTTP result; 403 is direct evidence of a read-only key.
+  def self.ensure_registrations(bundle_id)
+    wanted = {
+      bundle_id => { name: "PEAR MVP", capabilities: %w[PUSH_NOTIFICATIONS HEALTHKIT APP_GROUPS] },
+      "#{bundle_id}.share" => { name: "PEAR MVP Share", capabilities: %w[APP_GROUPS] },
+      "#{bundle_id}.activitywidget" => { name: "PEAR MVP Activity Widget", capabilities: [] },
+      "#{bundle_id}.watchkitapp" => { name: "PEAR MVP Watch App", capabilities: [] },
+    }
+    wanted.to_h do |identifier, spec|
+      result = {}
+      record = begin
+        data = request("GET", "/v1/bundleIds?filter[identifier]=#{URI.encode_www_form_component(identifier)}&include=bundleIdCapabilities&limit=5")
+        found = (data["data"] || []).find { |item| item.dig("attributes", "identifier") == identifier }
+        result[:existingCapabilities] = (data["included"] || []).map { |item| item.dig("attributes", "capabilityType") }.compact.sort if found
+        found
+      rescue StandardError
+        nil
+      end
+      if record.nil?
+        begin
+          created = request("POST", "/v1/bundleIds", { data: { type: "bundleIds", attributes: { identifier: identifier, name: spec[:name], platform: "IOS" } } })
+          record = created["data"]
+          result[:bundleId] = "created"
+        rescue StandardError => error
+          result[:bundleId] = "create failed HTTP #{error.message[/HTTP (\d+)/, 1] || "?"}"
+        end
+      else
+        result[:bundleId] = "exists"
+      end
+      if record
+        result[:capabilities] = spec[:capabilities].to_h do |capability|
+          outcome = if (result[:existingCapabilities] || []).include?(capability)
+            "exists"
+          else
+            begin
+              request("POST", "/v1/bundleIdCapabilities", { data: { type: "bundleIdCapabilities", attributes: { capabilityType: capability }, relationships: { bundleId: { data: { type: "bundleIds", id: record["id"] } } } } })
+              "enabled"
+            rescue StandardError => error
+              "failed HTTP #{error.message[/HTTP (\d+)/, 1] || "?"}"
+            end
+          end
+          [capability, outcome]
+        end
+      end
+      [identifier, result]
+    end
   end
 
   # Which provisioning endpoints this key may use. Xcode's automatic signing needs
@@ -211,6 +302,16 @@ platform :ios do
     UI.important("App Store Connect key scope (HTTP): #{key_scope.map { |k, v| "#{k}=#{v}" }.join(" ")}")
     provisioning_facts = PearOLSRelease.provisioning_facts([bundle_id, "#{bundle_id}.share", "#{bundle_id}.activitywidget", "#{bundle_id}.watchkitapp"])
     UI.important("Provisioning facts: #{JSON.generate(provisioning_facts)}")
+    if ENV["PEAR_OLS_PROVISION_ONLY"] == "true"
+      # Evidence and authorized setup only: no build-number allocation, archive, or upload.
+      role_facts = PearOLSRelease.key_role_facts(bundle_id)
+      registrations = PearOLSRelease.ensure_registrations(bundle_id)
+      after = PearOLSRelease.provisioning_facts([bundle_id, "#{bundle_id}.share", "#{bundle_id}.activitywidget", "#{bundle_id}.watchkitapp"])
+      report = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, internalGroupId: group.id, keyScope: key_scope, keyDerBytes: { stored: original_der_size, canonical: canonical_der_size }, keyRoleFacts: role_facts, before: provisioning_facts, registrations: registrations, after: after, state: "provision-facts" }
+      UI.important("Provision-only report: #{JSON.generate(report)}")
+      File.write(File.join(evidence, "release-receipt.json"), JSON.pretty_generate(report) + "\n")
+      next
+    end
     plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, keyScope: key_scope, keyDerBytes: { stored: original_der_size, canonical: canonical_der_size }, provisioningFacts: provisioning_facts, state: "prepared" }
     receipt = File.join(evidence, "release-receipt.json")
     File.write(receipt, JSON.pretty_generate(plan) + "\n")
