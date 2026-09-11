@@ -57,6 +57,21 @@ module PearOLSRelease
     Spaceship::ConnectAPI.get_build_uploads(app_id: app_id, filter: { platform: "IOS" }, includes: nil, limit: 200, sort: nil).all_pages.flat_map(&:to_models)
   end
 
+  # Copy the raw xcodebuild log into the proof directory with key material removed.
+  def self.preserve_archive_log(directory, target)
+    logs = Dir.glob(File.join(directory, "*.log")).sort_by { |path| File.mtime(path) }
+    return if logs.empty?
+    text = File.read(logs.last, encoding: "UTF-8", invalid: :replace, undef: :replace)
+    text = text.gsub(/-authenticationKey(Path|ID|IssuerID)\s+\S+/, "-authenticationKey\\1 <redacted>")
+    %w[ASC_KEY_ID ASC_ISSUER_ID].each do |name|
+      value = ENV[name].to_s
+      text = text.gsub(value, "<redacted>") unless value.empty?
+    end
+    File.write(target, text)
+  rescue StandardError => error
+    UI.important("Could not preserve the archive log: #{error.class}")
+  end
+
   def self.internal_group(app)
     groups = app.get_beta_groups.select { |group| group.is_internal_group == true }
     selected = groups.select { |group| group.name == "PEAR Team" }
@@ -112,7 +127,16 @@ platform :ios do
     FileUtils.mkdir_p(File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles"))
     FileUtils.mkdir_p(File.expand_path("~/Library/MobileDevice/Provisioning Profiles"))
     auth_args = ["-authenticationKeyPath", key_file.path, "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"), "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")].shelljoin
-    ipa = build_app(project: File.join(ios, "OpenClaw.xcodeproj"), scheme: "OpenClaw", configuration: "Release", export_method: "app-store", clean: true, skip_profile_detection: true, output_directory: File.join(ios, "build/pear-ols-release"), output_name: "PEAR-OLS.ipa", xcargs: "-allowProvisioningUpdates #{auth_args}", export_xcargs: "-allowProvisioningUpdates", export_options: { signingStyle: "automatic", teamID: config.fetch("teamId") })
+    # Keep the raw xcodebuild log in evidence: xcbeautify hides Xcode's automatic
+    # signing diagnostics, and a redacted copy is the only way to see why a profile
+    # or capability could not be provisioned on a hosted runner.
+    archive_logs = File.join(evidence, "archive-logs")
+    begin
+      ipa = build_app(project: File.join(ios, "OpenClaw.xcodeproj"), scheme: "OpenClaw", configuration: "Release", export_method: "app-store", clean: true, skip_profile_detection: true, output_directory: File.join(ios, "build/pear-ols-release"), output_name: "PEAR-OLS.ipa", xcargs: "DEVELOPMENT_TEAM=#{config.fetch("teamId")} -allowProvisioningUpdates #{auth_args}", export_xcargs: "-allowProvisioningUpdates", buildlog_path: archive_logs, export_options: { signingStyle: "automatic", teamID: config.fetch("teamId") })
+    rescue StandardError => error
+      PearOLSRelease.preserve_archive_log(archive_logs, File.join(evidence, "archive-log.txt"))
+      raise error
+    end
     sh("python3", File.join(ios, "pear-experiment/verify-ipa.py"), ipa, "--build-number", build_number.to_s)
     # Re-read the Apple-owned allocation immediately before the only upload attempt.
     UI.user_error!("Apple upload state changed during archive; re-plan on the next workflow run") unless PearOLSRelease.next_build(app) == build_number
