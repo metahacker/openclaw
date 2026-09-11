@@ -78,7 +78,11 @@ platform :ios do
     evidence = File.join(ios, "build/pear-ols-evidence")
     sh("python3", File.join(ios, "pear-experiment/verify-gate.py"))
     sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting")
-    UI.user_error!("PEAR release source must be committed and clean") unless release_source_clean?
+    unless release_source_clean?
+      dirty, = Open3.capture3("git", "status", "--porcelain=v1", "--untracked-files=all", chdir: root)
+      UI.error("Unclean paths (release refuses to archive):\n#{dirty}")
+      UI.user_error!("PEAR release source must be committed and clean")
+    end
     UI.user_error!("PEAR developer team mismatch") unless ENV["IOS_DEVELOPMENT_TEAM"] == config.fetch("teamId")
     %w[ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT].each { |name| UI.user_error!("Missing #{name}") if ENV[name].to_s.empty? }
     bundle_id = config.fetch("bundleId").to_s

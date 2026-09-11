@@ -11,12 +11,21 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.13'
+    # bundler-cache writes .bundle/config and vendor/bundle into the checkout, which the
+    # release lane's clean-tree gate rejects; install the locked bundle like upstream.
     - uses: ruby/setup-ruby@v1
       with:
         ruby-version: '3.4.10'
         bundler: '2.6.9'
-        bundler-cache: true
+        bundler-cache: false
         working-directory: apps/ios
+    - name: Install locked Fastlane bundle
+      shell: bash
+      working-directory: apps/ios
+      run: |
+        set -euo pipefail
+        bundle _2.6.9_ install --jobs 4 --retry 3
+        bundle _2.6.9_ check
     - name: Install native tooling
       shell: bash
       run: |

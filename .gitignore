@@ -81,6 +81,8 @@ extensions/canvas/src/host/a2ui/*.map
 apps/ios/fastlane/README.md
 apps/android/fastlane/README.md
 apps/ios/fastlane/report.xml
+# Local bundler config written by ruby/setup-ruby bundler-cache; never release input.
+apps/ios/.bundle/
 apps/ios/fastlane/Preview.html
 apps/ios/fastlane/screenshots/
 apps/ios/fastlane/metadata/*/release_notes.txt
