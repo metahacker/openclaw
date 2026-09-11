@@ -14,7 +14,7 @@ The current upstream uploader cannot accept this app as configuration alone: it 
 
 ## Proof and distribution
 
-- The secretless job builds current native iOS plus its unchanged target graph, runs `PearOLSTimelineTests` and `PearOLSUITests`, then captures the `--pear-ols-screenshot` synthetic surface on iPhone and 13-inch iPad.
+- The secretless job builds current native iOS plus its unchanged target graph, runs `PearOLSTimelineTests` and `PearOLSUITests`, then exports the retained in-test `--pear-ols-screenshot` attachment on iPhone and 13-inch iPad. An outer simulator screenshot after XCTest exits is rejected because it only captures the Home screen.
 - The generated shipping spec explicitly enables Apple's **Mac (Designed for iPad)** path for the app, share extension, and activity widget. This makes the same iPhone/iPad binary eligible on Apple-silicon Macs; it does not add a Catalyst or native macOS target.
 - Proof is bound by full source SHA and screenshot hashes. Runtime mock/synthetic screenshots are explicitly not authenticated-device evidence.
 - Release verifies the `release.json` App Store Connect app ID carries the PEAR MVP bundle identifier and the recorded metahack team. It does not create an app, tester, or group; the internal `PEAR Team` group must already exist on the PEAR MVP app.

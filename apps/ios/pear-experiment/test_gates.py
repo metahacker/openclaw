@@ -99,9 +99,15 @@ class ExperimentAdmissionTests(unittest.TestCase):
             for name in ["iphone.png", "ipad.png"]:
                 (directory / name).write_bytes(content)
             (directory / "formatting.patch").write_bytes(b"")
-            manifest = {"sourceSha": sha, "testsPassed": True, "formattingPatchSha256": hashlib.sha256(b"").hexdigest(), "screenshots": {name: hashlib.sha256(content).hexdigest() for name in ["iphone.png", "ipad.png"]}}
+            manifest = {"sourceSha": sha, "testsPassed": True, "formattingPatchSha256": hashlib.sha256(b"").hexdigest(), "screenshotSource": "xctest-attachment", "screenshots": {name: hashlib.sha256(content).hexdigest() for name in ["iphone.png", "ipad.png"]}}
             (directory / "manifest.json").write_text(json.dumps(manifest))
             gate.verify(directory, sha)
+            manifest["screenshotSource"] = "simctl-after-test"
+            (directory / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                gate.verify(directory, sha)
+            manifest["screenshotSource"] = "xctest-attachment"
+            (directory / "manifest.json").write_text(json.dumps(manifest))
             with self.assertRaises(ValueError):
                 gate.verify(directory, "b" * 40)
             patch = b"synthetic formatting diff"
@@ -114,6 +120,20 @@ class ExperimentAdmissionTests(unittest.TestCase):
             (directory / "ipad.png").write_bytes(content + b"changed")
             with self.assertRaises(ValueError):
                 gate.verify(directory, sha)
+
+    def test_xctest_proof_requires_one_retained_png(self):
+        simulator = module("simulator")
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            nested = directory / "attachments"
+            nested.mkdir()
+            screenshot = nested / "One Living Surface conversation.png"
+            screenshot.write_bytes(b"png")
+            (directory / "manifest.json").write_text("{}")
+            self.assertEqual(simulator.select_single_retained_screenshot(directory), screenshot)
+            (directory / "second.png").write_bytes(b"png")
+            with self.assertRaises(ValueError):
+                simulator.select_single_retained_screenshot(directory)
 
 
 if __name__ == "__main__":

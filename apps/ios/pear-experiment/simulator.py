@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 
@@ -76,6 +77,33 @@ def run_sampling_busy_main_thread(args: list[str], label: str, udid: str) -> Non
         raise subprocess.CalledProcessError(process.returncode, args)
 
 
+def select_single_retained_screenshot(directory: Path) -> Path:
+    screenshots = sorted(path for path in directory.rglob("*.png") if path.is_file())
+    if len(screenshots) != 1:
+        raise ValueError(f"Expected one retained XCTest screenshot, found {len(screenshots)}")
+    return screenshots[0]
+
+
+def export_test_screenshot(result_bundle: Path, target: Path) -> None:
+    """Export the screenshot retained inside the passing UI test itself.
+
+    XCTest returns the simulator to the Home screen after the suite, so an outer
+    simctl screenshot is not evidence of the app UI.
+    """
+    export = EVIDENCE / f"{target.stem}-xctest-attachments"
+    run(
+        "xcrun",
+        "xcresulttool",
+        "export",
+        "attachments",
+        "--path",
+        str(result_bundle),
+        "--output-path",
+        str(export),
+    )
+    shutil.copyfile(select_single_retained_screenshot(export), target)
+
+
 def main() -> None:
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     devices = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "--json"], text=True))["devices"]
@@ -96,18 +124,16 @@ def main() -> None:
             run("xcrun", "simctl", "boot", udid)
         run("xcrun", "simctl", "bootstatus", udid, "-b")
         run("xcrun", "simctl", "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
-        args = ["xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / f"{family}.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawUITests/PearOLSUITests", "CODE_SIGNING_ALLOWED=NO", "test"]
+        result_bundle = EVIDENCE / f"{family}.xcresult"
+        args = ["xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(result_bundle), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawUITests/PearOLSUITests", "CODE_SIGNING_ALLOWED=NO", "test"]
         run_sampling_busy_main_thread(args, f"{family}-uitest", udid)
-        # The passing UI suite leaves its verified fixture visible. Capture that exact
-        # process before another test target or a cold relaunch can replace it with an
-        # unrendered launch frame on a slow hosted simulator.
         name = f"{family}.png"
-        run("xcrun", "simctl", "io", udid, "screenshot", str(EVIDENCE / name))
+        export_test_screenshot(result_bundle, EVIDENCE / name)
         screenshots[name] = hashlib.sha256((EVIDENCE / name).read_bytes()).hexdigest()
         if family == "iphone":
             run("xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClaw", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / "logic.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawTests/PearOLSTimelineTests", "CODE_SIGNING_ALLOWED=NO", "test")
     formatting = (EVIDENCE / "formatting.patch").read_bytes()
-    (EVIDENCE / "manifest.json").write_text(json.dumps({"sourceSha": os.environ["GITHUB_SHA"], "testsPassed": True, "formattingPatchSha256": hashlib.sha256(formatting).hexdigest(), "hasUncommittedFormatting": bool(formatting), "screenshots": screenshots, "devices": {k: v["name"] for k, v in selected.items()}}, indent=2) + "\n")
+    (EVIDENCE / "manifest.json").write_text(json.dumps({"sourceSha": os.environ["GITHUB_SHA"], "testsPassed": True, "formattingPatchSha256": hashlib.sha256(formatting).hexdigest(), "hasUncommittedFormatting": bool(formatting), "screenshotSource": "xctest-attachment", "screenshots": screenshots, "devices": {k: v["name"] for k, v in selected.items()}}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

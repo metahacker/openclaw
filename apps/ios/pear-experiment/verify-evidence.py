@@ -13,6 +13,8 @@ def verify(directory: Path, expected_sha: str, require_committed_formatting: boo
     manifest = json.loads((directory / "manifest.json").read_text())
     if manifest.get("sourceSha") != expected_sha or manifest.get("testsPassed") is not True:
         raise ValueError("Simulator proof is missing or belongs to another source commit")
+    if manifest.get("screenshotSource") != "xctest-attachment":
+        raise ValueError("Screenshot proof must come from the retained passing XCTest attachment")
     formatting = (directory / "formatting.patch").read_bytes()
     if manifest.get("formattingPatchSha256") != hashlib.sha256(formatting).hexdigest():
         raise ValueError("Formatting patch is missing or changed")
