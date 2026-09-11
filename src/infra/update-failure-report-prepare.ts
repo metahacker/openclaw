@@ -122,7 +122,7 @@ function resolveUpdateTarget(
   );
 }
 
-function resolveRollbackOutcome(
+function resolveRecoveryOutcome(
   result: UpdateRunResult,
   context: UpdateFailureReportContext,
 ): string {
@@ -212,7 +212,7 @@ export async function prepareUpdateFailureReport(
   const platform = sanitizeReportField(`${process.platform}/${process.arch}`, context);
   const target = resolveUpdateTarget(input, context);
   const phase = resolveFailedPhase(input.result, context);
-  const rollback = resolveRollbackOutcome(input.result, context);
+  const recovery = resolveRecoveryOutcome(input.result, context);
   const bodyWithoutMarker = [
     "# OpenClaw update failure report",
     "",
@@ -223,7 +223,7 @@ export async function prepareUpdateFailureReport(
     `- Node version: ${sanitizeReportField(process.versions.node ?? "unknown", context)}`,
     `- Update target: ${target}`,
     `- Failed phase: ${phase}`,
-    `- Rollback outcome: ${rollback}`,
+    `- Recovery outcome: ${recovery}`,
     "",
     "## Bounded diagnostics",
     "",
