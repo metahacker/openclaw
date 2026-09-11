@@ -85,7 +85,9 @@ def prepare(*, simulator: bool, build_number: str) -> Path:
 
     signing = {
         "OPENCLAW_CODE_SIGN_STYLE": "Automatic",
-        "OPENCLAW_CODE_SIGN_IDENTITY": "Apple Development",
+        # Release archives use Apple-managed distribution signing: the team is at its
+        # development-certificate cap and no local certificate exists on hosted runners.
+        "OPENCLAW_CODE_SIGN_IDENTITY": "Apple Development" if simulator else "Apple Distribution",
         "OPENCLAW_DEVELOPMENT_TEAM": team,
         "OPENCLAW_IOS_SELECTED_TEAM": team,
         "OPENCLAW_APP_BUNDLE_ID": bundle,

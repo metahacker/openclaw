@@ -321,11 +321,17 @@ platform :ios do
     # Xcode's automatic signing rejected a randomly named temp key file with
     # "Authentication failed: Make sure a bearer token was provided"; it wants the
     # key where Xcode itself looks: ~/private_keys/AuthKey_<KEY_ID>.p8.
-    key_dir = File.expand_path("~/private_keys")
-    FileUtils.mkdir_p(key_dir, mode: 0o700)
-    key_path = File.join(key_dir, "AuthKey_#{ENV.fetch("ASC_KEY_ID")}.p8")
-    File.write(key_path, private_key)
-    File.chmod(0o600, key_path)
+    # The archive-free probe authenticated only once the key was also present in Xcode's
+    # own lookup directory; keep both copies and remove both when the lane ends.
+    key_paths = ["~/private_keys", "~/.appstoreconnect/private_keys"].map do |directory|
+      expanded = File.expand_path(directory)
+      FileUtils.mkdir_p(expanded, mode: 0o700)
+      path = File.join(expanded, "AuthKey_#{ENV.fetch("ASC_KEY_ID")}.p8")
+      File.write(path, private_key)
+      File.chmod(0o600, path)
+      path
+    end
+    key_path = key_paths.first
     FileUtils.mkdir_p(File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles"))
     FileUtils.mkdir_p(File.expand_path("~/Library/MobileDevice/Provisioning Profiles"))
     auth_args = ["-authenticationKeyPath", key_path, "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"), "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")].shelljoin
@@ -372,6 +378,6 @@ platform :ios do
     File.write(receipt, JSON.pretty_generate(plan) + "\n")
     UI.success("PEAR #{config.fetch('version')} (#{build_number}) verified in internal TestFlight")
   ensure
-    File.delete(key_path) if key_path && File.exist?(key_path)
+    (key_paths || []).each { |path| File.delete(path) if File.exist?(path) }
   end
 end
