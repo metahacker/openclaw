@@ -1,6 +1,8 @@
 # This fork-only lane is reachable solely through the supported release wrapper.
 # It does not alter the canonical OpenClaw App Store identity or publish metadata.
 require "base64"
+require "openssl"
+require "tmpdir"
 require "net/http"
 require "uri"
 
@@ -72,6 +74,80 @@ module PearOLSRelease
     UI.important("Could not preserve the archive log: #{error.class}")
   end
 
+  # Re-encode the key as the exact PKCS#8 form Apple ships in a downloaded .p8
+  # (P-256, no inner curve parameters). OpenSSL-based fastlane accepts re-encoded
+  # variants; Xcode's own signer rejected the stored one with "Authentication
+  # failed: Make sure a bearer token was provided, it is properly configured and
+  # signed". Returns [canonical PEM, original DER size, canonical DER size].
+  def self.canonical_p8(pem)
+    ec = OpenSSL::PKey::EC.new(pem)
+    raise "App Store Connect key is not a P-256 key" unless ec.group.curve_name == "prime256v1"
+    private_scalar = ec.private_key.to_s(2).rjust(32, "\0")
+    public_point = ec.public_key.to_octet_string(:uncompressed)
+    ec_private_key = OpenSSL::ASN1::Sequence.new([
+      OpenSSL::ASN1::Integer.new(1),
+      OpenSSL::ASN1::OctetString.new(private_scalar),
+      OpenSSL::ASN1::ASN1Data.new([OpenSSL::ASN1::BitString.new(public_point)], 1, :CONTEXT_SPECIFIC),
+    ])
+    pkcs8 = OpenSSL::ASN1::Sequence.new([
+      OpenSSL::ASN1::Integer.new(0),
+      OpenSSL::ASN1::Sequence.new([OpenSSL::ASN1::ObjectId.new("id-ecPublicKey"), OpenSSL::ASN1::ObjectId.new("prime256v1")]),
+      OpenSSL::ASN1::OctetString.new(ec_private_key.to_der),
+    ])
+    der = pkcs8.to_der
+    body = Base64.strict_encode64(der).scan(/.{1,64}/).join("\n")
+    original_der_size = Base64.decode64(pem.lines.reject { |line| line.include?("-----") }.join).bytesize
+    ["-----BEGIN PRIVATE KEY-----\n#{body}\n-----END PRIVATE KEY-----\n", original_der_size, der.bytesize]
+  end
+
+  # What manual App Store signing would need from Apple, recorded as facts only:
+  # whether the public API exposes app groups, which of the four bundle IDs exist
+  # and which capabilities they carry, and what the match store already holds.
+  def self.provisioning_facts(bundle_ids)
+    facts = {}
+    facts[:appGroupsApi] = begin
+      request("GET", "/v1/appGroups?limit=1")
+      "200"
+    rescue StandardError => error
+      error.message[/HTTP (\d+)/, 1] || "error"
+    end
+    facts[:bundleIds] = bundle_ids.to_h do |identifier|
+      detail = begin
+        data = request("GET", "/v1/bundleIds?filter[identifier]=#{URI.encode_www_form_component(identifier)}&include=bundleIdCapabilities&limit=5")
+        record = (data["data"] || []).find { |item| item.dig("attributes", "identifier") == identifier }
+        if record
+          caps = (data["included"] || []).map { |item| item.dig("attributes", "capabilityType") }.compact.sort
+          { registered: true, capabilities: caps }
+        else
+          { registered: false }
+        end
+      rescue StandardError => error
+        { error: error.message[/HTTP (\d+)/, 1] || "error" }
+      end
+      [identifier, detail]
+    end
+    facts[:matchStore] = match_store_inventory
+    facts
+  end
+
+  # File names inside the match git store (certificate and profile inventory only).
+  def self.match_store_inventory
+    auth = ENV["MATCH_GIT_BASIC_AUTHORIZATION"].to_s
+    return { available: false, reason: "no MATCH_GIT_BASIC_AUTHORIZATION" } if auth.empty?
+    Dir.mktmpdir("pear-match-") do |dir|
+      _out, _err, status = Open3.capture3(
+        "git", "-c", "http.extraheader=AUTHORIZATION: basic #{auth}", "clone", "--depth", "1", "--quiet",
+        "https://github.com/metahacker/fastlane-certs", dir
+      )
+      return { available: false, reason: "clone failed" } unless status.success?
+      entries = Dir.glob(File.join(dir, "**", "*")).select { |path| File.file?(path) }
+      names = entries.map { |path| path.delete_prefix("#{dir}/") }.reject { |name| name.start_with?(".git") }.sort
+      { available: true, files: names.map { |name| name.gsub(/[0-9A-Z]{8,}/, "<id>") } }
+    end
+  rescue StandardError => error
+    { available: false, reason: error.class.to_s }
+  end
+
   # Which provisioning endpoints this key may use. Xcode's automatic signing needs
   # certificates/identifiers/profiles access; only HTTP status codes are recorded.
   def self.key_scope
@@ -123,6 +199,8 @@ platform :ios do
     private_key = ENV.fetch("ASC_KEY_CONTENT").strip
     private_key = private_key.include?("BEGIN PRIVATE KEY") ? private_key.gsub('\\n', "\n") : Base64.strict_decode64(private_key)
     private_key += "\n" unless private_key.end_with?("\n")
+    private_key, original_der_size, canonical_der_size = PearOLSRelease.canonical_p8(private_key)
+    UI.important("App Store Connect key DER bytes: stored=#{original_der_size} canonical=#{canonical_der_size}")
     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: private_key, is_key_content_base64: false)
     app = Spaceship::ConnectAPI::App.get(app_id: app_id)
     UI.user_error!("App Store Connect app does not carry the PEAR MVP bundle identifier") unless app.bundle_id == bundle_id
@@ -131,7 +209,9 @@ platform :ios do
     build_number = PearOLSRelease.next_build(app)
     key_scope = PearOLSRelease.key_scope
     UI.important("App Store Connect key scope (HTTP): #{key_scope.map { |k, v| "#{k}=#{v}" }.join(" ")}")
-    plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, keyScope: key_scope, state: "prepared" }
+    provisioning_facts = PearOLSRelease.provisioning_facts([bundle_id, "#{bundle_id}.share", "#{bundle_id}.activitywidget", "#{bundle_id}.watchkitapp"])
+    UI.important("Provisioning facts: #{JSON.generate(provisioning_facts)}")
+    plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, keyScope: key_scope, keyDerBytes: { stored: original_der_size, canonical: canonical_der_size }, provisioningFacts: provisioning_facts, state: "prepared" }
     receipt = File.join(evidence, "release-receipt.json")
     File.write(receipt, JSON.pretty_generate(plan) + "\n")
     sh("python3", File.join(ios, "pear-experiment/prepare.py"), "--build-number", build_number.to_s)
