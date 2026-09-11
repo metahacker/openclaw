@@ -77,7 +77,7 @@ def run_sampling_busy_main_thread(args: list[str], label: str, udid: str) -> Non
         raise subprocess.CalledProcessError(process.returncode, args)
 
 
-def wait_for_destination(udid: str, attempts: int = 12) -> None:
+def destination_ready(udid: str, attempts: int = 12) -> bool:
     """simctl can report a device available before Xcode's destination index sees it;
     a hosted runner then fails with "Unable to find a device matching the provided
     destination specifier". Wait until xcodebuild itself lists the device."""
@@ -87,9 +87,9 @@ def wait_for_destination(udid: str, attempts: int = 12) -> None:
             capture_output=True, text=True, cwd=ROOT,
         ).stdout
         if f"id:{udid}" in listing:
-            return
+            return True
         time.sleep(5)
-    raise SystemExit(f"Xcode never listed simulator {udid} as a destination")
+    return False
 
 
 def select_single_retained_screenshot(directory: Path) -> Path:
@@ -126,19 +126,31 @@ def main() -> None:
     for runtime in sorted(devices, reverse=True):
         if "iOS" in runtime:
             candidates.extend(d for d in devices[runtime] if d.get("isAvailable"))
-    selected = {
-        "iphone": next((d for d in candidates if "iPhone" in d["name"]), None),
-        "ipad": next((d for d in candidates if "iPad" in d["name"] and "13-inch" in d["name"]), None),
+    options = {
+        "iphone": [d for d in candidates if "iPhone" in d["name"]],
+        "ipad": [d for d in candidates if "iPad" in d["name"] and "13-inch" in d["name"]],
     }
-    if any(d is None for d in selected.values()):
+    if any(not choices for choices in options.values()):
         raise SystemExit("Required iPhone and 13-inch iPad simulators unavailable")
     screenshots = {}
-    for family, device in selected.items():
+    selected = {}
+    for family, choices in options.items():
+        # A hosted runner can leave a second simulator stuck in "Waiting on System App";
+        # try each available device of the family until Xcode can target one.
+        device = None
+        for candidate in choices:
+            udid = candidate["udid"]
+            if candidate["state"] != "Booted":
+                run("xcrun", "simctl", "boot", udid)
+            subprocess.run(["xcrun", "simctl", "bootstatus", udid, "-b"], cwd=ROOT, check=False)
+            if destination_ready(udid):
+                device = candidate
+                break
+            subprocess.run(["xcrun", "simctl", "shutdown", udid], cwd=ROOT, check=False)
+        if device is None:
+            raise SystemExit(f"Xcode never listed any available {family} simulator as a destination")
+        selected[family] = device
         udid = device["udid"]
-        if device["state"] != "Booted":
-            run("xcrun", "simctl", "boot", udid)
-        run("xcrun", "simctl", "bootstatus", udid, "-b")
-        wait_for_destination(udid)
         run("xcrun", "simctl", "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         result_bundle = EVIDENCE / f"{family}.xcresult"
         args = ["xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(result_bundle), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawUITests/PearOLSUITests", "CODE_SIGNING_ALLOWED=NO", "test"]
@@ -148,6 +160,7 @@ def main() -> None:
         screenshots[name] = hashlib.sha256((EVIDENCE / name).read_bytes()).hexdigest()
         if family == "iphone":
             run("xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClaw", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / "logic.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawTests/PearOLSTimelineTests", "CODE_SIGNING_ALLOWED=NO", "test")
+        subprocess.run(["xcrun", "simctl", "shutdown", udid], cwd=ROOT, check=False)
     formatting = (EVIDENCE / "formatting.patch").read_bytes()
     (EVIDENCE / "manifest.json").write_text(json.dumps({"sourceSha": os.environ["GITHUB_SHA"], "testsPassed": True, "formattingPatchSha256": hashlib.sha256(formatting).hexdigest(), "hasUncommittedFormatting": bool(formatting), "screenshotSource": "xctest-attachment", "screenshots": screenshots, "devices": {k: v["name"] for k, v in selected.items()}}, indent=2) + "\n")
 
