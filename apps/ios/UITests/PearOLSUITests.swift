@@ -2,7 +2,7 @@ import XCTest
 
 @MainActor
 final class PearOLSUITests: XCTestCase {
-    func testContinuousConversationAndProjectReturnPreserveDraft() {
+    func testContinuousConversationProjectReturnAndInlineContext() {
         let app = XCUIApplication()
         app.launchArguments = ["--pear-ols-screenshot"]
         app.launch()
@@ -27,17 +27,6 @@ final class PearOLSUITests: XCTestCase {
         back.tap()
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertEqual(composer.value as? String, "Keep my place")
-        let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "One Living Surface conversation"
-        attachment.lifetime = .keepAlways
-        self.add(attachment)
-    }
-
-    func testContextIsInlineAndNavigationDoesNotSelectSendContext() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--pear-ols-screenshot"]
-        app.launch()
-        XCTAssertTrue(app.buttons["ols.context"].waitForExistence(timeout: 15))
         app.buttons["ols.context"].tap()
         // The timeline card under the sheet shares the label, so target the sheet row.
         let moment = app.buttons["ols.moment.sample-garden"]
@@ -45,5 +34,9 @@ final class PearOLSUITests: XCTestCase {
         moment.tap()
         XCTAssertTrue(app.buttons["ols.anchor.sample-garden"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Talking about'")).firstMatch.exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "One Living Surface conversation"
+        attachment.lifetime = .keepAlways
+        self.add(attachment)
     }
 }
