@@ -106,8 +106,9 @@ platform :ios do
     UI.user_error!("release.json appId is empty: the PEAR MVP App Store Connect record does not exist yet") if app_id.empty?
     UI.user_error!("Refusing to release into the original PEAR app") if app_id == PearOLSRelease::LEGACY_PEAR_APP_ID
     UI.user_error!("Refusing to release into the original PEAR app bundle") if !ENV["IOS_BUNDLE_ID"].to_s.empty? && bundle_id == ENV["IOS_BUNDLE_ID"]
-    private_key = ENV.fetch("ASC_KEY_CONTENT")
+    private_key = ENV.fetch("ASC_KEY_CONTENT").strip
     private_key = private_key.include?("BEGIN PRIVATE KEY") ? private_key.gsub('\\n', "\n") : Base64.strict_decode64(private_key)
+    private_key += "\n" unless private_key.end_with?("\n")
     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: private_key, is_key_content_base64: false)
     app = Spaceship::ConnectAPI::App.get(app_id: app_id)
     UI.user_error!("App Store Connect app does not carry the PEAR MVP bundle identifier") unless app.bundle_id == bundle_id
@@ -120,13 +121,17 @@ platform :ios do
     sh("python3", File.join(ios, "pear-experiment/prepare.py"), "--build-number", build_number.to_s)
     sh("node", File.join(root, "scripts/ios-write-swift-filelist.mjs"))
     Dir.chdir(ios) { sh("xcodegen", "generate", "--spec", "project.pear-ols.generated.yml") }
-    key_file = Tempfile.new(["pear-asc-", ".p8"])
-    key_file.chmod(0600)
-    key_file.write(private_key)
-    key_file.close
+    # Xcode's automatic signing rejected a randomly named temp key file with
+    # "Authentication failed: Make sure a bearer token was provided"; it wants the
+    # key where Xcode itself looks: ~/private_keys/AuthKey_<KEY_ID>.p8.
+    key_dir = File.expand_path("~/private_keys")
+    FileUtils.mkdir_p(key_dir, mode: 0o700)
+    key_path = File.join(key_dir, "AuthKey_#{ENV.fetch("ASC_KEY_ID")}.p8")
+    File.write(key_path, private_key)
+    File.chmod(0o600, key_path)
     FileUtils.mkdir_p(File.expand_path("~/Library/Developer/Xcode/UserData/Provisioning Profiles"))
     FileUtils.mkdir_p(File.expand_path("~/Library/MobileDevice/Provisioning Profiles"))
-    auth_args = ["-authenticationKeyPath", key_file.path, "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"), "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")].shelljoin
+    auth_args = ["-authenticationKeyPath", key_path, "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"), "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")].shelljoin
     # Keep the raw xcodebuild log in evidence: xcbeautify hides Xcode's automatic
     # signing diagnostics, and a redacted copy is the only way to see why a profile
     # or capability could not be provisioned on a hosted runner.
@@ -170,6 +175,6 @@ platform :ios do
     File.write(receipt, JSON.pretty_generate(plan) + "\n")
     UI.success("PEAR #{config.fetch('version')} (#{build_number}) verified in internal TestFlight")
   ensure
-    key_file&.close!
+    File.delete(key_path) if key_path && File.exist?(key_path)
   end
 end
