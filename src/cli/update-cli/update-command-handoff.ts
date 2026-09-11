@@ -29,7 +29,12 @@ import { defaultRuntime } from "../../runtime.js";
 import { isPidAlive } from "../../shared/pid-alive.js";
 import { formatInstallationTargetCommand } from "../installation-target-format.js";
 import { printResult } from "./progress.js";
-import { resolveNodeRunner, UpdatePreMutationError, type UpdateCommandOptions } from "./shared.js";
+import {
+  parseUpdateTimeoutMs,
+  resolveNodeRunner,
+  UpdatePreMutationError,
+  type UpdateCommandOptions,
+} from "./shared.js";
 import { releaseUpdateCommandPreflightForHandoff } from "./update-command-executor.js";
 import { resolveOwnedManagedUpdateEnv } from "./update-command-service-env.js";
 
@@ -126,6 +131,7 @@ export async function handoffUpdateFromGateway(params: {
   invocationCwd?: string;
   stopProgress: () => void;
 }): Promise<boolean> {
+  const canaryTimeoutMs = parseUpdateTimeoutMs(params.opts.canaryTimeout, "--canary-timeout");
   if (
     process.env.OPENCLAW_UPDATE_RUN_HANDOFF === "1" ||
     (process.platform !== "linux" && process.platform !== "darwin")
@@ -172,6 +178,7 @@ export async function handoffUpdateFromGateway(params: {
     execPath: params.nodeRunner ?? resolveNodeRunner(),
     argv1,
     timeoutMs: params.timeoutMs,
+    canaryTimeoutMs,
     restartDrainTimeoutMs: resolveGatewayRestartDeferralTimeoutMs(),
     channel: normalizeUpdateChannel(params.opts.channel) ?? undefined,
     tag: params.tag,

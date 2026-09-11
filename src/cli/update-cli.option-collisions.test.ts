@@ -70,6 +70,15 @@ type UpdateFinalizeCommandOptions = {
 };
 
 describe("update cli option collisions", () => {
+  it.each([
+    { argv: ["update", "--canary-timeout", "600"], handler: updateCommand },
+    { argv: ["update", "--canary-timeout", "600", "wizard"], handler: updateWizardCommand },
+    { argv: ["update", "wizard", "--canary-timeout", "600"], handler: updateWizardCommand },
+  ])("forwards the candidate validation deadline: $argv", async ({ argv, handler }) => {
+    await runRegisteredCli({ register: registerUpdateCli, argv });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ canaryTimeout: "600" }));
+  });
+
   it.each(
     Array.from({ length: 8 }, (_value, mask) => {
       const flags = ["--dry-run", "--json", "--yes"];
@@ -90,7 +99,7 @@ describe("update cli option collisions", () => {
     expect(updateCommand).not.toHaveBeenCalled();
   });
   it.each([
-    ...["--channel", "--tag", "--timeout"].flatMap((flag) =>
+    ...["--channel", "--tag", "--timeout", "--canary-timeout"].flatMap((flag) =>
       ["beta", "", "--", "--no-restart"].flatMap((value) => [[flag, value], [`${flag}=${value}`]]),
     ),
     ["--no-restart"],
@@ -108,6 +117,7 @@ describe("update cli option collisions", () => {
     "--channel",
     "--tag",
     "--timeout",
+    "--canary-timeout",
     "--no-restart",
     "--accept-capabilities",
     "--version",

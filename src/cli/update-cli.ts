@@ -54,6 +54,7 @@ type CommanderUpdateOptions = Record<string, unknown> & {
   reapplyLocalOverrides?: boolean;
   tag?: string;
   timeout?: string;
+  canaryTimeout?: string;
   yes?: boolean;
 };
 
@@ -211,6 +212,7 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
           channel: opts.channel,
           tag: opts.tag,
           timeout: opts.timeout,
+          canaryTimeout: opts.canaryTimeout,
           yes: Boolean(opts.yes),
           acceptCapabilities: Boolean(opts.acceptCapabilities),
         });
@@ -228,13 +230,20 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
     .action(
       createUpdateLeafAction(
         async (opts, command) => {
-          for (const key of ["channel", "tag", "timeout", "restart", "acceptCapabilities"]) {
+          for (const key of [
+            "channel",
+            "tag",
+            "timeout",
+            "canaryTimeout",
+            "restart",
+            "acceptCapabilities",
+          ]) {
             if (
               update.getOptionValueSource(key) &&
               update.getOptionValueSource(key) !== "default"
             ) {
               throw new Error(
-                `--${key === "restart" ? "no-restart" : key === "acceptCapabilities" ? "accept-capabilities" : key} is not supported for openclaw update cleanup.`,
+                `--${key === "restart" ? "no-restart" : key === "acceptCapabilities" ? "accept-capabilities" : key === "canaryTimeout" ? "canary-timeout" : key} is not supported for openclaw update cleanup.`,
               );
             }
           }
@@ -279,6 +288,10 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
   update
     .command("wizard")
     .description("Interactive update wizard")
+    .option(
+      "--canary-timeout <seconds>",
+      "Candidate validation timeout, capped by --timeout (default: --timeout)",
+    )
     .option("--accept-capabilities", "Accept widened plugin capabilities", false)
     .option("--timeout <seconds>", "Timeout for each update step in seconds (default: 1800)")
     .addHelpText(
@@ -290,6 +303,10 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
         const { updateWizardCommand } = await import("./update-cli/wizard.js");
         await updateWizardCommand({
           timeout: inheritedUpdateTimeout(opts, command),
+          canaryTimeout:
+            typeof opts.canaryTimeout === "string"
+              ? opts.canaryTimeout
+              : inheritOptionFromParent<string>(command, "canaryTimeout"),
           acceptCapabilities:
             Boolean(opts.acceptCapabilities) ||
             Boolean(inheritOptionFromParent<boolean>(command, "acceptCapabilities")),

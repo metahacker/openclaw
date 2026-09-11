@@ -34,7 +34,8 @@ export async function updateWizardCommand(opts: UpdateWizardOptions = {}): Promi
   }
 
   const timeoutMs = parseTimeoutMsOrExit(opts.timeout);
-  if (timeoutMs === null) {
+  const canaryTimeoutMs = parseTimeoutMsOrExit(opts.canaryTimeout, "--canary-timeout");
+  if (timeoutMs === null || canaryTimeoutMs === null) {
     return;
   }
 
@@ -144,6 +145,7 @@ export async function updateWizardCommand(opts: UpdateWizardOptions = {}): Promi
       channel: requestedChannel ?? undefined,
       restart,
       timeout: opts.timeout,
+      canaryTimeout: opts.canaryTimeout,
       acceptCapabilities: opts.acceptCapabilities,
     });
   } catch (err) {

@@ -457,6 +457,7 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
   const postCoreUpdateChannel = process.env[POST_CORE_UPDATE_CHANNEL_ENV]?.trim();
 
   const timeoutMs = parseUpdateTimeoutMs(opts.timeout);
+  const canaryTimeoutMs = parseUpdateTimeoutMs(opts.canaryTimeout, "--canary-timeout");
   const shouldRestart = opts.restart !== false;
   const requestedChannel = normalizeUpdateChannel(opts.channel);
   if (opts.channel !== undefined && !requestedChannel) {
@@ -516,6 +517,7 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
     postCoreUpdateResume,
     postCoreUpdateChannel,
     timeoutMs,
+    canaryTimeoutMs,
     shouldRestart,
     requestedChannel,
     devTarget,

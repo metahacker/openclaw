@@ -102,6 +102,8 @@ export async function validateUpdateCandidateCanary(params: {
   config: OpenClawConfig;
   stateDir: string;
   timeoutMs?: number;
+  /** Optional post-snapshot validation limit, capped by timeoutMs. */
+  canaryTimeoutMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
   nodeRunner?: string;
@@ -111,7 +113,8 @@ export async function validateUpdateCandidateCanary(params: {
   onStep?: (step: UpdateStepResult) => void;
 }): Promise<CanaryResult> {
   const started = Date.now();
-  const budget = Math.max(1, params.timeoutMs ?? 300_000);
+  const timeoutMs = params.timeoutMs ?? 300_000;
+  const budget = Math.max(1, Math.min(timeoutMs, params.canaryTimeoutMs ?? timeoutMs));
   let deadline = started + budget;
   let workDeadline = deadline - Math.min(2_000, Math.floor(budget / 10));
   const remaining = () => {

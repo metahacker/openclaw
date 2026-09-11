@@ -13,6 +13,10 @@ export const UPDATE_OPTION_SPECS: readonly [
     "Override the package target for this update (dist-tag, version, or package spec)",
   ],
   ["--timeout <seconds>", "Timeout for each update step in seconds (default: 1800)"],
+  [
+    "--canary-timeout <seconds>",
+    "Candidate validation timeout, capped by --timeout (default: --timeout)",
+  ],
   ["--yes", "Skip confirmation prompts (non-interactive)", false],
   [
     "--reapply-local-overrides",

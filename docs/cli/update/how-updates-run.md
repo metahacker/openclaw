@@ -77,6 +77,12 @@ It uses the larger of that allowance and the configured per-step timeout.
 The deadline extends while private files continue changing. A stalled snapshot
 reports its size and applied budget. Snapshot time does not consume the separate
 runtime validation budget, which also honors the configured per-step timeout.
+Use `--canary-timeout <seconds>` to choose a shorter post-snapshot validation
+budget without shortening snapshot copying. It defaults to `--timeout` and is
+capped by that per-step budget. For example,
+`openclaw update --timeout 1800 --canary-timeout 600` preserves the snapshot
+size/progress budget and allows ten minutes for the subsequent Doctor, config,
+plugin, and boot validation. Both options require positive integer seconds.
 
 Before copying databases, the updater estimates space for the SQLite snapshot
 set, temporary copies, and the candidate Doctor backup. If the system temporary
@@ -91,7 +97,7 @@ modify WAL sidecars beside live databases. Each schema inspection has a
 30-second deadline; if compatibility cannot be verified, rollback is refused.
 
 The canary binds a free loopback port and must report `/startupz` as `started`,
-then `/readyz` as ready within the configured per-step timeout. Failure records the
+then `/readyz` as ready within the effective candidate validation budget. Failure records the
 phase, elapsed time, and bounded diagnostics; the canary process group and
 temporary state are cleaned up. This proves candidate startup on copied state;
 live channel and provider behavior are checked after activation.

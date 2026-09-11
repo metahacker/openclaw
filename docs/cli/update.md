@@ -111,6 +111,7 @@ phase limits are unchanged.
 | `--dry-run`                                      | Preview planned actions (channel/tag/target/restart flow) without writing config, installing, syncing plugins, or restarting.                                                                                                                                                                                                                 |
 | `--json`                                         | Print machine-readable `UpdateRunResult` JSON. Includes `postUpdate.plugins.warnings` when a managed plugin needs repair, beta-channel plugin fallback details, and `postUpdate.plugins.integrityDrifts` when npm plugin artifact drift is detected during post-update sync.                                                                  |
 | `--timeout <seconds>`                            | Per-step timeout. Default `1800`.                                                                                                                                                                                                                                                                                                             |
+| `--canary-timeout <seconds>`                     | Optional post-snapshot Doctor, config, plugin, and canary boot validation budget. Defaults to `--timeout` and cannot exceed it. Snapshot copying retains its separate size/progress budget.                                                                                                                                                   |
 | `--yes`                                          | Skip confirmation prompts (for example downgrade confirmation).                                                                                                                                                                                                                                                                               |
 | `--reapply-local-overrides`                      | Replay trusted local packaged `dist` edits when the new package has the same baseline. Otherwise preserve them for manual recovery.                                                                                                                                                                                                           |
 | `--accept-capabilities`                          | Accept each plugin's reviewed capability changes during post-update sync. This acknowledges the exact staged capability surface; it does not disable capability checks or establish future trust.                                                                                                                                             |
@@ -175,10 +176,11 @@ The channel picker reads the local install identity without checking Git
 freshness or dependencies. Those checks run when you apply the update; use
 `openclaw update status` to inspect availability first.
 
-| Flag                    | Default | Description                                                  |
-| ----------------------- | ------- | ------------------------------------------------------------ |
-| `--timeout <seconds>`   | `1800`  | Timeout for each update step.                                |
-| `--accept-capabilities` | `false` | Accept reviewed plugin capability changes during the update. |
+| Flag                         | Default     | Description                                                                                              |
+| ---------------------------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `--timeout <seconds>`        | `1800`      | Timeout for each update step.                                                                            |
+| `--canary-timeout <seconds>` | `--timeout` | Optional candidate validation budget, capped by the per-step timeout; does not shorten snapshot copying. |
+| `--accept-capabilities`      | `false`     | Accept reviewed plugin capability changes during the update.                                             |
 
 ## Detailed topics
 

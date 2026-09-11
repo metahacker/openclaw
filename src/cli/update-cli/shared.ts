@@ -50,6 +50,7 @@ export type UpdateCommandOptions = {
   channel?: string;
   tag?: string;
   timeout?: string;
+  canaryTimeout?: string;
   yes?: boolean;
 };
 
@@ -72,6 +73,7 @@ export type UpdateFinalizeOptions = {
 export type UpdateWizardOptions = {
   acceptCapabilities?: boolean;
   timeout?: string;
+  canaryTimeout?: string;
 };
 
 export class UpdatePreMutationError extends Error {
@@ -85,31 +87,38 @@ export class UpdatePreMutationError extends Error {
   }
 }
 
-const INVALID_TIMEOUT_ERROR = "--timeout must be a positive integer (seconds)";
+type UpdateTimeoutFlag = "--timeout" | "--canary-timeout";
+const INVALID_TIMEOUT_ERROR = "must be a positive integer (seconds)";
 const MAX_SAFE_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
 /** Parse the shared timeout contract without exiting an owning operation. */
-export function parseUpdateTimeoutMs(timeout?: string): number | undefined {
+export function parseUpdateTimeoutMs(
+  timeout?: string,
+  flag: UpdateTimeoutFlag = "--timeout",
+): number | undefined {
   if (timeout === undefined) {
     return undefined;
   }
   const trimmed = timeout.trim();
   const seconds = parseStrictPositiveInteger(trimmed);
   if (seconds === undefined || seconds > MAX_SAFE_TIMEOUT_SECONDS) {
-    throw new Error(INVALID_TIMEOUT_ERROR);
+    throw new Error(`${flag} ${INVALID_TIMEOUT_ERROR}`);
   }
   return seconds * 1000;
 }
 
 /** Parse a CLI timeout in seconds, exiting through the runtime on invalid input. */
-export function parseTimeoutMsOrExit(timeout?: string): number | undefined | null {
+export function parseTimeoutMsOrExit(
+  timeout?: string,
+  flag: UpdateTimeoutFlag = "--timeout",
+): number | undefined | null {
   try {
-    return parseUpdateTimeoutMs(timeout);
+    return parseUpdateTimeoutMs(timeout, flag);
   } catch (error) {
     if (isJsonOutputModeActive(process.argv)) {
       throw error;
     }
-    defaultRuntime.error(INVALID_TIMEOUT_ERROR);
+    defaultRuntime.error(`${flag} ${INVALID_TIMEOUT_ERROR}`);
     defaultRuntime.exit(1);
     return null;
   }

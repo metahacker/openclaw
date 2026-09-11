@@ -14,6 +14,7 @@ export type MutableUpdateExecutionParams = {
   switchToGit: boolean;
   timeoutMs: number | undefined;
   updateStepTimeoutMs: number;
+  canaryTimeoutMs?: number;
   startedAt: number;
   progress: ReturnType<typeof createUpdateProgress>["progress"];
   stop: () => void;

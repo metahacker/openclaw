@@ -102,43 +102,67 @@ afterEach(async () => {
 });
 
 describe("update candidate canary", () => {
-  it("preserves the runtime validation budget after a snapshot exceeds five minutes", async () => {
-    const now = Date.now.bind(Date);
-    let snapshotElapsed = 0;
-    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + snapshotElapsed);
-    mocks.snapshot.mockImplementationOnce(async () => {
-      snapshotElapsed = 300_001;
-      return {
-        code: 0,
-        stdout: Buffer.from(JSON.stringify({ versions: [], pluginPaths: {} })),
-        stderr: Buffer.alloc(0),
-        termination: "exit",
-      };
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json({ status: "started", ready: true })),
-    );
-    try {
-      const result = await validateUpdateCandidateCanary({
-        root,
-        stateDir: root,
-        config: {},
-        env: {},
+  it.each([
+    { timeoutMs: 1_000, canaryTimeoutMs: undefined, expected: "ok" },
+    { timeoutMs: 1_000, canaryTimeoutMs: 500, expected: "error" },
+    { timeoutMs: 500, canaryTimeoutMs: 1_000, expected: "error" },
+  ])(
+    "preserves snapshot time and applies validation limits: %j",
+    async ({ timeoutMs, canaryTimeoutMs, expected }) => {
+      const now = Date.now.bind(Date);
+      let snapshotElapsed = 0;
+      let doctorElapsed = 0;
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockImplementation(() => now() + snapshotElapsed + doctorElapsed);
+      const spawn = mocks.spawn.getMockImplementation();
+      if (!spawn) {
+        throw new Error("Missing candidate process fixture");
+      }
+      mocks.spawn.mockImplementationOnce((...args) => {
+        doctorElapsed = 600;
+        return spawn(...args);
       });
-      expect(result, result.logTail.join("\n")).toMatchObject({ status: "ok", phase: "readiness" });
-      expect(result.durationMs).toBeGreaterThanOrEqual(300_001);
-      expect(result.steps).toContainEqual(
-        expect.objectContaining({ name: "candidate gateway canary", exitCode: 0 }),
+      mocks.snapshot.mockImplementationOnce(async () => {
+        snapshotElapsed = 300_001;
+        return {
+          code: 0,
+          stdout: Buffer.from(JSON.stringify({ versions: [], pluginPaths: {} })),
+          stderr: Buffer.alloc(0),
+          termination: "exit",
+        };
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ status: "started", ready: true })),
       );
-      expect(result.logTail.join("\n")).toContain("readyz: ready");
-      await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    } finally {
-      clock.mockRestore();
-    }
-  });
+      try {
+        const result = await validateUpdateCandidateCanary({
+          root,
+          stateDir: root,
+          config: {},
+          env: {},
+          timeoutMs,
+          canaryTimeoutMs,
+        });
+        expect(result, result.logTail.join("\n")).toMatchObject({ status: expected });
+        expect(result.durationMs).toBeGreaterThanOrEqual(300_001);
+        if (expected === "ok") {
+          expect(result.steps).toContainEqual(
+            expect.objectContaining({ name: "candidate gateway canary", exitCode: 0 }),
+          );
+          expect(result.logTail.join("\n")).toContain("readyz: ready");
+        } else {
+          expect(result.logTail.join("\n")).toContain("Candidate validation deadline exceeded");
+        }
+        await expect(fs.access(childEnv.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
 
   it("keeps verified readiness and records a warning when rehearsal cleanup fails", async () => {
     vi.stubGlobal(

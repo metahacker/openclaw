@@ -8214,6 +8214,7 @@ describe("update-cli", () => {
   ] as const)(
     "validates and repairs the staged candidate while the previous gateway serves (%s)",
     async (outcome) => {
+      const updateOptions = { yes: true, json: true, canaryTimeout: "600" };
       const valid = outcome === "valid";
       const succeeds = valid || outcome === "repaired";
       const { nodeModules, pkgRoot, entryPath } = await setupInstalledPackageAtNodeModules(
@@ -8346,6 +8347,7 @@ describe("update-cli", () => {
       });
       candidateValidation.mockImplementation(async (options) => {
         const { root } = options;
+        expect(options).toMatchObject({ timeoutMs: 1_800_000, canaryTimeoutMs: 600_000 });
         if (options.rehearsal) {
           expect(options.rehearsal.stateDir).toBe(rehearsalStateDir);
         }
@@ -8403,8 +8405,10 @@ describe("update-cli", () => {
       });
 
       if (succeeds) {
-        await updateCommand({ yes: true, json: true }).catch((cause: unknown) => {
-          throw new Error(`${getErrorOutput()}\n${JSON.stringify(lastWriteJsonCall())}`, { cause });
+        await updateCommand(updateOptions).catch((cause: unknown) => {
+          throw new Error(`${getErrorOutput()}\n${JSON.stringify(lastWriteJsonCall())}`, {
+            cause,
+          });
         });
         expect(events).toEqual(
           valid
@@ -8426,7 +8430,7 @@ describe("update-cli", () => {
           verification: { readyz: true, serviceRunning: true },
         });
       } else {
-        await expect(updateCommand({ yes: true, json: true })).rejects.toEqual(new ExitError(1));
+        await expect(updateCommand(updateOptions)).rejects.toEqual(new ExitError(1));
         expect(events).toEqual(
           outcome === "state-only" || outcome === "live-config-change"
             ? ["validate", "repair", "validate", "validate"]

@@ -1889,6 +1889,7 @@ let automaticRequested = false;
 
 function resolveUpdateCliArgv(params: {
   timeoutMs?: number;
+  canaryTimeoutMs?: number;
   channel?: UpdateChannel;
   tag?: string;
   acceptCapabilities?: boolean;
@@ -1913,6 +1914,12 @@ function resolveUpdateCliArgv(params: {
     updateArgs.push("--timeout", String(Math.max(1, Math.ceil(params.timeoutMs / 1000))));
   }
 
+  if (typeof params.canaryTimeoutMs === "number" && Number.isFinite(params.canaryTimeoutMs)) {
+    updateArgs.push(
+      "--canary-timeout",
+      String(Math.max(1, Math.ceil(params.canaryTimeoutMs / 1000))),
+    );
+  }
   return resolveManagedServiceCliArgv(params, updateArgs);
 }
 
@@ -1934,6 +1941,7 @@ function resolveManagedServiceCliArgv(
 export function formatManagedServiceUpdateCommand(
   params?: {
     timeoutMs?: number;
+    canaryTimeoutMs?: number;
     channel?: UpdateChannel;
     tag?: string;
     acceptCapabilities?: boolean;
@@ -1961,6 +1969,7 @@ type ManagedServiceUpdateHandoffParams = {
   beforePark?: () => Promise<void>;
   root: string;
   timeoutMs?: number;
+  canaryTimeoutMs?: number;
   restartDrainTimeoutMs: number;
   restartDelayMs?: number;
   channel?: UpdateChannel;
@@ -2133,6 +2142,7 @@ async function spawnManagedServiceUpdateHandoff(
         acceptCapabilities: params.acceptCapabilities,
         reapplyLocalOverrides: params.reapplyLocalOverrides,
         timeoutMs: params.timeoutMs,
+        canaryTimeoutMs: params.canaryTimeoutMs,
         channel: params.channel,
         tag: params.tag,
         execPath: params.execPath ?? process.execPath,
@@ -2143,6 +2153,7 @@ async function spawnManagedServiceUpdateHandoff(
     : formatManagedServiceUpdateCommand(
         {
           timeoutMs: params.timeoutMs,
+          canaryTimeoutMs: params.canaryTimeoutMs,
           channel: params.channel,
           tag: params.tag,
           acceptCapabilities: params.acceptCapabilities,

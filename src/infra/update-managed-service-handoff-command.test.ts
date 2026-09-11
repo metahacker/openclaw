@@ -89,6 +89,8 @@ afterEach(async () => {
 });
 
 async function startHandoffAndReadCommand(params: {
+  timeoutMs?: number;
+  canaryTimeoutMs?: number;
   runId?: string;
   channel: "beta" | "extended-stable";
   tag?: string;
@@ -108,6 +110,8 @@ async function startHandoffAndReadCommand(params: {
   const { startManagedServiceUpdateHandoff } = await import("./update-managed-service-handoff.js");
   const result = await startManagedServiceUpdateHandoff({
     runId: params.runId,
+    timeoutMs: params.timeoutMs,
+    canaryTimeoutMs: params.canaryTimeoutMs,
     root: MOCK_INSTALL_ROOT,
     restartDrainTimeoutMs: params.restartDrainTimeoutMs ?? 300_000,
     ...(params.restartDelayMs === undefined ? {} : { restartDelayMs: params.restartDelayMs }),
@@ -328,6 +332,8 @@ describe("managed service update handoff command", () => {
       channel: "beta",
       tag: "2.0.0-beta.1",
       acceptCapabilities: true,
+      timeoutMs: 1_800_000,
+      canaryTimeoutMs: 600_000,
     });
 
     expect(result.commandArgv).toEqual([
@@ -341,8 +347,13 @@ describe("managed service update handoff command", () => {
       "beta",
       "--tag",
       "2.0.0-beta.1",
+      "--timeout",
+      "1800",
+      "--canary-timeout",
+      "600",
     ]);
     expect(result.command).toContain("--tag 2.0.0-beta.1");
+    expect(result.command).toContain("--canary-timeout 600");
     expect(result.command).toContain("--channel beta");
     expect(result.command).toContain("--accept-capabilities");
     expect(result.command).toContain("--yes");

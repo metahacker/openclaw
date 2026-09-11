@@ -214,11 +214,13 @@ beforeEach(() => {
 describe("mutable update execution", () => {
   it.each(
     (["package", "git"] as const).flatMap((kind) =>
-      [30_000, 600_000].map((timeoutMs) => ({ kind, timeoutMs })),
+      [30_000, 600_000].flatMap((timeoutMs) =>
+        [undefined, 100_000].map((canaryTimeoutMs) => ({ kind, timeoutMs, canaryTimeoutMs })),
+      ),
     ),
   )(
     "passes the configured $timeoutMs ms step budget to $kind candidate validation",
-    async ({ kind, timeoutMs }) => {
+    async ({ kind, timeoutMs, canaryTimeoutMs }) => {
       const runStagedUpdate = async ({
         validateCandidate,
       }: {
@@ -235,12 +237,14 @@ describe("mutable update execution", () => {
         ...executionParams(kind),
         timeoutMs,
         updateStepTimeoutMs: timeoutMs,
+        canaryTimeoutMs,
       });
 
       expect(execution?.result.status).toBe("ok");
       expect(mocks.validateCanary).toHaveBeenCalledOnce();
       expect(mocks.validateCanary.mock.calls[0]?.[0].root).toBe("/candidate");
       expect(mocks.validateCanary.mock.calls[0]?.[0].timeoutMs).toBe(timeoutMs);
+      expect(mocks.validateCanary.mock.calls[0]?.[0].canaryTimeoutMs).toBe(canaryTimeoutMs);
     },
   );
 

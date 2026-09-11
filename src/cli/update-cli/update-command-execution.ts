@@ -354,6 +354,7 @@ export async function executeMutableUpdate(
         assertCurrent,
         nodeRunner: params.packageUpdateNodeRunner,
         timeoutMs: updateStepTimeoutMs,
+        canaryTimeoutMs: params.canaryTimeoutMs,
         onStep: (step) => params.progress?.onStepComplete?.({ ...step, index: 0, total: 0 }),
       });
       assertUpdateCommandRecovery(opts);

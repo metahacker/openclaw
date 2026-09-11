@@ -622,6 +622,7 @@ async function updateCommandInternal(
     switchToGit,
     timeoutMs,
     updateStepTimeoutMs,
+    canaryTimeoutMs: prepared.canaryTimeoutMs,
     startedAt,
     progress,
     stop,
