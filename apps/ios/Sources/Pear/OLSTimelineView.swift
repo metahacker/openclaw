@@ -65,7 +65,11 @@ struct OLSTimelineView: View {
                                     .accessibilityIdentifier("ols.anchor.\(context.segmentId)")
                                     .padding(.top, 8)
                                 }
-                                self.bubble(message)
+                                if message.isCommentary {
+                                    self.commentary(message)
+                                } else {
+                                    self.bubble(message)
+                                }
                             }
                             .id(message.id)
                         }
@@ -93,7 +97,7 @@ struct OLSTimelineView: View {
                     let atPresent = distance <= (self.model.isAtPresent ? 160 : 60)
                     if self.model.isAtPresent != atPresent { self.model.isAtPresent = atPresent }
                 }
-                .onChange(of: self.model.messages.last?.id) { _, _ in
+                .onChange(of: self.model.messages.last) { _, _ in
                     guard self.model.isAtPresent else { return }
                     withAnimation(self.reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         proxy.scrollTo("ols-bottom", anchor: .bottom)
@@ -208,6 +212,28 @@ struct OLSTimelineView: View {
             .frame(maxWidth: 620, alignment: .leading)
             if message.isAssistant { Spacer(minLength: 28) }
         }
+    }
+
+    private func commentary(_ message: OLSMessage) -> some View {
+        HStack {
+            Text(Self.parenthesizedCommentary(message.text))
+                .font(OLSTheme.label)
+                .foregroundStyle(OLSTheme.secondary)
+                .italic()
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("PEAR update: \(message.text)")
+                .accessibilityIdentifier("ols.commentary.\(message.id)")
+            Spacer(minLength: 36)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+    }
+
+    private static func parenthesizedCommentary(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("("), trimmed.hasSuffix(")") { return trimmed }
+        return "(\(trimmed))"
     }
 
     private var composer: some View {

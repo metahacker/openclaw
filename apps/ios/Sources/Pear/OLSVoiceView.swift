@@ -21,7 +21,7 @@ struct OLSVoiceView: View {
     }
 
     private var latestReply: OLSMessage? {
-        self.model.messages.last(where: \.isAssistant)
+        self.model.latestFinalReply
     }
 
     var body: some View {

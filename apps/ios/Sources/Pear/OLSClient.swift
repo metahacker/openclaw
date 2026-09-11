@@ -41,6 +41,25 @@ struct OLSMessage: Codable, Equatable, Identifiable, Sendable {
     var isAssistant: Bool {
         self.role == "assistant" || self.role == "pear"
     }
+
+    var isCommentary: Bool {
+        self.kind == "commentary"
+    }
+}
+
+struct OLSCommentary: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var text: String
+    var createdAt: String
+}
+
+struct OLSProgressStatus: Codable, Equatable, Sendable {
+    var context: OLSContext?
+    var commentary: [OLSCommentary]
+}
+
+struct OLSProgressFeed: Codable, Equatable, Sendable {
+    var statuses: [OLSProgressStatus]
 }
 
 struct OLSTimeline: Codable, Sendable {
@@ -64,6 +83,7 @@ struct OLSSendReceipt: Codable, Sendable {
 
 protocol OLSService: Sendable {
     func timeline(before: String?) async throws -> OLSTimeline
+    func progress() async throws -> OLSProgressFeed
     func send(text: String, requestID: String, projectID: Int?, attachments: [String]) async throws -> OLSSendReceipt
 }
 
@@ -112,6 +132,10 @@ struct OLSClient: OLSService {
         components.path = "/api/ols"
         if let before { components.queryItems = [URLQueryItem(name: "before", value: before)] }
         return try await self.get(components.string ?? "/api/ols")
+    }
+
+    func progress() async throws -> OLSProgressFeed {
+        try await self.get("/api/ols/progress")
     }
 
     func send(text: String, requestID: String, projectID: Int?, attachments: [String]) async throws -> OLSSendReceipt {

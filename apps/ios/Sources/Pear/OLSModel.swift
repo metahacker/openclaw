@@ -39,6 +39,7 @@ final class OLSModel {
     @ObservationIgnored private let service: any OLSService
     @ObservationIgnored private var beforeCursor: String?
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var commentaryTask: Task<Void, Never>?
     @ObservationIgnored private var pending: PendingSend?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var selectionRevision = 0
@@ -58,7 +59,7 @@ final class OLSModel {
            let saved = try? JSONDecoder().decode(SavedPlace.self, from: data)
         {
             self.draft = saved.draft
-            if let messageID = saved.messageID {
+            if let messageID = saved.messageID, !messageID.hasPrefix("commentary:") {
                 self.jump(to: messageID)
             } else {
                 self.visibleMessageID = nil
@@ -80,7 +81,9 @@ final class OLSModel {
 
     private func savePlace() {
         guard let storageKey,
-              let data = try? JSONEncoder().encode(SavedPlace(draft: self.draft, messageID: self.visibleMessageID)),
+              let data = try? JSONEncoder().encode(SavedPlace(
+                  draft: self.draft,
+                  messageID: self.durableMessageID(for: self.visibleMessageID))),
               let raw = String(data: data, encoding: .utf8)
         else { return }
         _ = KeychainStore.saveString(raw, service: "ai.openclaw.pear.ols-place", account: storageKey)
@@ -100,6 +103,19 @@ final class OLSModel {
     var contexts: [OLSContext] {
         var seen = Set<String>()
         return self.messages.compactMap(\.context).filter { seen.insert($0.segmentId).inserted }
+    }
+
+    var latestFinalReply: OLSMessage? {
+        self.messages.last(where: { $0.isAssistant && !$0.isCommentary })
+    }
+
+    func durableMessageID(for messageID: String?) -> String? {
+        guard let messageID, let index = self.messages.firstIndex(where: { $0.id == messageID }) else {
+            return messageID
+        }
+        guard self.messages[index].isCommentary else { return messageID }
+        if let preceding = self.messages.prefix(index).last(where: { !$0.isCommentary }) { return preceding.id }
+        return self.messages.dropFirst(index + 1).first(where: { !$0.isCommentary })?.id
     }
 
     func context(before messageID: String?) -> OLSContext? {
@@ -137,6 +153,32 @@ final class OLSModel {
         } catch {
             guard self.generation == generation else { return }
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Commentary is a best-effort presence lane. If it is temporarily unavailable,
+    /// the durable conversation remains usable and the next poll quietly tries again.
+    func refreshCommentary() async {
+        let generation = self.generation
+        do {
+            let feed = try await self.service.progress()
+            guard self.generation == generation else { return }
+            let messages = feed.statuses.flatMap { status in
+                status.commentary.map { commentary in
+                    OLSMessage(
+                        id: "commentary:\(commentary.id)",
+                        kind: "commentary",
+                        role: "assistant",
+                        text: commentary.text,
+                        createdAt: commentary.createdAt,
+                        context: status.context)
+                }
+            }
+            self.merge(messages)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard self.generation == generation else { return }
         }
     }
 
@@ -207,11 +249,20 @@ final class OLSModel {
     }
 
     func start() {
-        guard self.refreshTask == nil else { return }
-        self.refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.refresh()
-                do { try await Task.sleep(for: .seconds(4)) } catch { return }
+        if self.refreshTask == nil {
+            self.refreshTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    await self?.refresh()
+                    do { try await Task.sleep(for: .seconds(4)) } catch { return }
+                }
+            }
+        }
+        if self.commentaryTask == nil {
+            self.commentaryTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    await self?.refreshCommentary()
+                    do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                }
             }
         }
     }
@@ -219,6 +270,8 @@ final class OLSModel {
     func stop() {
         self.refreshTask?.cancel()
         self.refreshTask = nil
+        self.commentaryTask?.cancel()
+        self.commentaryTask = nil
     }
 
     func clear() {
@@ -247,7 +300,13 @@ final class OLSModel {
     private func merge(_ incoming: [OLSMessage]) {
         var byID = Dictionary(self.messages.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         for message in incoming {
-            byID[message.id] = message
+            if let existing = byID[message.id], existing.isCommentary, message.isCommentary {
+                var updated = message
+                updated.createdAt = existing.createdAt
+                byID[message.id] = updated
+            } else {
+                byID[message.id] = message
+            }
         }
         self.messages = byID.values.sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
@@ -267,6 +326,13 @@ final class OLSModel {
                 role: "user",
                 text: "Can we keep Saturday afternoon free?",
                 createdAt: "2026-09-09T10:00:00Z",
+                context: context),
+            OLSMessage(
+                id: "commentary:sample",
+                kind: "commentary",
+                role: "assistant",
+                text: "I’m keeping Saturday open while I check the morning plan.",
+                createdAt: "2026-09-09T10:00:30Z",
                 context: context),
             OLSMessage(
                 id: "2",

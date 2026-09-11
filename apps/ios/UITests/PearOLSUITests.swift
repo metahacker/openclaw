@@ -8,6 +8,7 @@ final class PearOLSUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.scrollViews["ols.timeline"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["ols.context"].exists)
+        XCTAssertTrue(app.staticTexts["ols.commentary.commentary:sample"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.tabBars.firstMatch.exists)
         let composer = app.textFields["ols.composer"].exists
             ? app.textFields["ols.composer"] : app.textViews["ols.composer"]

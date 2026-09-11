@@ -81,6 +81,71 @@ struct PearOLSTimelineTests {
         #expect(!model.hasMore)
         #expect(await service.beforeValues == [nil, "2"])
     }
+
+    @Test func `commentary snapshots update one row while final reply stays distinct`() async {
+        let context = OLSContext(
+            segmentId: "context-a",
+            projectId: 7,
+            slug: "japan-family-trip",
+            label: "Japan family trip",
+            source: "named")
+        let final = OLSMessage(
+            id: "final",
+            role: "assistant",
+            text: "The itinerary is ready.",
+            createdAt: "2026-09-10T19:00:04Z",
+            context: context)
+        let user = OLSMessage(
+            id: "user",
+            role: "user",
+            text: "Where are we on the itinerary?",
+            createdAt: "2026-09-10T19:00:00Z",
+            context: context)
+        let service = StubOLSService(
+            pages: [OLSTimeline(streamId: "pair", items: [user, final], hasMore: false, activeContext: context)],
+            progressFeeds: [
+                OLSProgressFeed(statuses: [OLSProgressStatus(context: context, commentary: [
+                    OLSCommentary(
+                        id: "run:commentary:0",
+                        text: "I’m checking the saved itinerary.",
+                        createdAt: "2026-09-10T19:00:01Z"),
+                ])]),
+                OLSProgressFeed(statuses: [OLSProgressStatus(context: context, commentary: [
+                    OLSCommentary(
+                        id: "run:commentary:0",
+                        text: "I’m checking the saved itinerary and current reservations.",
+                        createdAt: "2026-09-10T19:00:02Z"),
+                ])]),
+            ])
+        let model = OLSModel(service: service)
+        await model.refresh()
+        await model.refreshCommentary()
+        await model.refreshCommentary()
+
+        let commentary = model.messages.filter(\.isCommentary)
+        #expect(commentary.count == 1)
+        #expect(commentary.first?.text == "I’m checking the saved itinerary and current reservations.")
+        #expect(commentary.first?.createdAt == "2026-09-10T19:00:01Z")
+        #expect(commentary.first?.context == context)
+        #expect(model.durableMessageID(for: commentary.first?.id) == "user")
+        #expect(model.latestFinalReply?.id == "final")
+    }
+
+    @Test func `delayed commentary cannot repopulate after sign out`() async {
+        let service = SuspendedCommentaryOLSService()
+        let model = OLSModel(service: service)
+        let task = Task { await model.refreshCommentary() }
+        await service.waitForProgress()
+        model.clear()
+        await service.resolveProgress(OLSProgressFeed(statuses: [OLSProgressStatus(context: nil, commentary: [
+            OLSCommentary(
+                id: "old-account:commentary:0",
+                text: "I’m still working in the old account.",
+                createdAt: "2026-09-10T19:00:01Z"),
+        ])]))
+        await task.value
+        #expect(model.messages.isEmpty)
+    }
 }
 
 private actor StubOLSService: OLSService {
@@ -90,18 +155,28 @@ private actor StubOLSService: OLSService {
     }
 
     var pages: [OLSTimeline]
+    var progressFeeds: [OLSProgressFeed]
     var receipts: [OLSSendReceipt]
     var requests: [Request] = []
     var beforeValues: [String?] = []
 
-    init(pages: [OLSTimeline] = [], receipts: [OLSSendReceipt] = []) {
+    init(
+        pages: [OLSTimeline] = [],
+        progressFeeds: [OLSProgressFeed] = [],
+        receipts: [OLSSendReceipt] = [])
+    {
         self.pages = pages
+        self.progressFeeds = progressFeeds
         self.receipts = receipts
     }
 
     func timeline(before: String?) async throws -> OLSTimeline {
         self.beforeValues.append(before)
         return self.pages.isEmpty ? OLSTimeline(streamId: "pair", items: [], hasMore: false) : self.pages.removeFirst()
+    }
+
+    func progress() async throws -> OLSProgressFeed {
+        self.progressFeeds.isEmpty ? OLSProgressFeed(statuses: []) : self.progressFeeds.removeFirst()
     }
 
     func send(
@@ -135,6 +210,46 @@ private actor SuspendedOLSService: OLSService {
     func resolveHistory(_ page: OLSTimeline) {
         self.history?.resume(returning: page)
         self.history = nil
+    }
+
+    func progress() async throws -> OLSProgressFeed {
+        OLSProgressFeed(statuses: [])
+    }
+
+    func send(
+        text _: String,
+        requestID _: String,
+        projectID _: Int?,
+        attachments _: [String]) async throws -> OLSSendReceipt
+    {
+        OLSSendReceipt(ok: true)
+    }
+}
+
+private actor SuspendedCommentaryOLSService: OLSService {
+    private var progressFeed: CheckedContinuation<OLSProgressFeed, any Error>?
+    private var began: CheckedContinuation<Void, Never>?
+
+    func timeline(before _: String?) async throws -> OLSTimeline {
+        OLSTimeline(streamId: "pair", items: [], hasMore: false)
+    }
+
+    func progress() async throws -> OLSProgressFeed {
+        try await withCheckedThrowingContinuation { continuation in
+            self.progressFeed = continuation
+            self.began?.resume()
+            self.began = nil
+        }
+    }
+
+    func waitForProgress() async {
+        if self.progressFeed != nil { return }
+        await withCheckedContinuation { self.began = $0 }
+    }
+
+    func resolveProgress(_ feed: OLSProgressFeed) {
+        self.progressFeed?.resume(returning: feed)
+        self.progressFeed = nil
     }
 
     func send(
