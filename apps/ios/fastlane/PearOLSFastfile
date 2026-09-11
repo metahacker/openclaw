@@ -72,6 +72,20 @@ module PearOLSRelease
     UI.important("Could not preserve the archive log: #{error.class}")
   end
 
+  # Which provisioning endpoints this key may use. Xcode's automatic signing needs
+  # certificates/identifiers/profiles access; only HTTP status codes are recorded.
+  def self.key_scope
+    %w[/v1/bundleIds?limit=1 /v1/certificates?limit=1 /v1/profiles?limit=1].to_h do |path|
+      status = begin
+        request("GET", path)
+        "200"
+      rescue StandardError => error
+        error.message[/HTTP (\d+)/, 1] || "error"
+      end
+      [path.sub("/v1/", "").sub("?limit=1", ""), status]
+    end
+  end
+
   def self.internal_group(app)
     groups = app.get_beta_groups.select { |group| group.is_internal_group == true }
     selected = groups.select { |group| group.name == "PEAR Team" }
@@ -115,7 +129,9 @@ platform :ios do
     UI.user_error!("Resolved App Store Connect app is the original PEAR app") if app.id.to_s == PearOLSRelease::LEGACY_PEAR_APP_ID
     group = PearOLSRelease.internal_group(app)
     build_number = PearOLSRelease.next_build(app)
-    plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, state: "prepared" }
+    key_scope = PearOLSRelease.key_scope
+    UI.important("App Store Connect key scope (HTTP): #{key_scope.map { |k, v| "#{k}=#{v}" }.join(" ")}")
+    plan = { sourceSha: ENV.fetch("GITHUB_SHA"), appId: app.id, version: config.fetch("version"), buildNumber: build_number, internalGroupId: group.id, keyScope: key_scope, state: "prepared" }
     receipt = File.join(evidence, "release-receipt.json")
     File.write(receipt, JSON.pretty_generate(plan) + "\n")
     sh("python3", File.join(ios, "pear-experiment/prepare.py"), "--build-number", build_number.to_s)
