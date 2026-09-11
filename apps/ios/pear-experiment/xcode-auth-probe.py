@@ -55,7 +55,7 @@ def make_project(root: Path, entitlements: bool = False) -> Path:
               <key>com.apple.developer.healthkit</key><true/>
             </dict></plist>
         ''').lstrip())
-        entitlement_block = "                CODE_SIGN_ENTITLEMENTS: Probe.entitlements\n"
+        entitlement_block = "        CODE_SIGN_ENTITLEMENTS: Probe.entitlements\n"
     (root / "Sources/ProbeApp.swift").write_text(textwrap.dedent('''
         import SwiftUI
         @main struct ProbeApp: App { var body: some Scene { WindowGroup { Text("probe") } } }
@@ -79,7 +79,9 @@ def make_project(root: Path, entitlements: bool = False) -> Path:
                 TARGETED_DEVICE_FAMILY: "1,2"
                 SWIFT_VERSION: "5.0"
     ''') + entitlement_block)
-    subprocess.run(["xcodegen", "generate"], cwd=root, check=True, capture_output=True)
+    generated = subprocess.run(["xcodegen", "generate"], cwd=root, capture_output=True, text=True)
+    if generated.returncode != 0:
+        raise RuntimeError(f"xcodegen failed: {(generated.stdout + generated.stderr).strip()[-400:]}")
     return root / "PearAuthProbe.xcodeproj"
 
 
@@ -130,15 +132,18 @@ def main() -> None:
         "variants": {},
     }
     distribution = ["CODE_SIGN_IDENTITY=Apple Distribution"]
-    with tempfile.TemporaryDirectory(prefix="pear-auth-probe-") as tmp:
-        env = dict(os.environ)
-        project = make_project(Path(tmp))
-        # Development identity hits the team's development-certificate cap; Apple-managed
-        # distribution signing needs no local certificate and the distribution slot is free.
-        report["variants"]["development-identity"] = archive(project, auth, env)
-        report["variants"]["distribution-identity"] = archive(project, auth + distribution, env)
-        project = make_project(Path(tmp), entitlements=True)
-        report["variants"]["distribution-identity+entitlements"] = archive(project, auth + distribution, env)
+    try:
+        with tempfile.TemporaryDirectory(prefix="pear-auth-probe-") as tmp:
+            env = dict(os.environ)
+            project = make_project(Path(tmp))
+            # Development identity hits the team's development-certificate cap; Apple-managed
+            # distribution signing needs no local certificate and the distribution slot is free.
+            report["variants"]["development-identity"] = archive(project, auth, env)
+            report["variants"]["distribution-identity"] = archive(project, auth + distribution, env)
+            project = make_project(Path(tmp), entitlements=True)
+            report["variants"]["distribution-identity+entitlements"] = archive(project, auth + distribution, env)
+    except Exception as error:  # the partial report is the evidence; keep it
+        report["probeError"] = redact(str(error))[:400]
     for directory in (home / "private_keys", home / ".appstoreconnect/private_keys", home / ".private_keys"):
         try:
             (directory / f"AuthKey_{KEY_ID}.p8").unlink()
