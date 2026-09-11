@@ -77,6 +77,21 @@ def run_sampling_busy_main_thread(args: list[str], label: str, udid: str) -> Non
         raise subprocess.CalledProcessError(process.returncode, args)
 
 
+def wait_for_destination(udid: str, attempts: int = 12) -> None:
+    """simctl can report a device available before Xcode's destination index sees it;
+    a hosted runner then fails with "Unable to find a device matching the provided
+    destination specifier". Wait until xcodebuild itself lists the device."""
+    for _ in range(attempts):
+        listing = subprocess.run(
+            ["xcodebuild", "-showdestinations", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests"],
+            capture_output=True, text=True, cwd=ROOT,
+        ).stdout
+        if f"id:{udid}" in listing:
+            return
+        time.sleep(5)
+    raise SystemExit(f"Xcode never listed simulator {udid} as a destination")
+
+
 def select_single_retained_screenshot(directory: Path) -> Path:
     screenshots = sorted(path for path in directory.rglob("*.png") if path.is_file())
     if len(screenshots) != 1:
@@ -123,6 +138,7 @@ def main() -> None:
         if device["state"] != "Booted":
             run("xcrun", "simctl", "boot", udid)
         run("xcrun", "simctl", "bootstatus", udid, "-b")
+        wait_for_destination(udid)
         run("xcrun", "simctl", "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         result_bundle = EVIDENCE / f"{family}.xcresult"
         args = ["xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(result_bundle), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawUITests/PearOLSUITests", "CODE_SIGNING_ALLOWED=NO", "test"]
