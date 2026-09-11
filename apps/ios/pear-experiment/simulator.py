@@ -95,19 +95,17 @@ def main() -> None:
         if device["state"] != "Booted":
             run("xcrun", "simctl", "boot", udid)
         run("xcrun", "simctl", "bootstatus", udid, "-b")
+        run("xcrun", "simctl", "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
         args = ["xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClawUITests", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / f"{family}.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawUITests/PearOLSUITests", "CODE_SIGNING_ALLOWED=NO", "test"]
         run_sampling_busy_main_thread(args, f"{family}-uitest", udid)
-        if family == "iphone":
-            run("xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClaw", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / "logic.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawTests/PearOLSTimelineTests", "CODE_SIGNING_ALLOWED=NO", "test")
-        app = DERIVED / "Build/Products/Debug-iphonesimulator/OpenClaw.app"
-        run("xcrun", "simctl", "install", udid, str(app))
-        run("xcrun", "simctl", "status_bar", udid, "override", "--time", "9:41", "--batteryState", "charged", "--batteryLevel", "100")
-        run("xcrun", "simctl", "launch", udid, "io.metahack.pear.ols.validation.debug", "--pear-ols-screenshot")
-        # Behavioral readiness is asserted by the UI test; this settles capture animation.
-        time.sleep(3)
+        # The passing UI suite leaves its verified fixture visible. Capture that exact
+        # process before another test target or a cold relaunch can replace it with an
+        # unrendered launch frame on a slow hosted simulator.
         name = f"{family}.png"
         run("xcrun", "simctl", "io", udid, "screenshot", str(EVIDENCE / name))
         screenshots[name] = hashlib.sha256((EVIDENCE / name).read_bytes()).hexdigest()
+        if family == "iphone":
+            run("xcodebuild", "-project", str(IOS / "OpenClaw.xcodeproj"), "-scheme", "OpenClaw", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}", "-derivedDataPath", str(DERIVED), "-resultBundlePath", str(EVIDENCE / "logic.xcresult"), "-parallel-testing-enabled", "NO", "-only-testing:OpenClawTests/PearOLSTimelineTests", "CODE_SIGNING_ALLOWED=NO", "test")
     formatting = (EVIDENCE / "formatting.patch").read_bytes()
     (EVIDENCE / "manifest.json").write_text(json.dumps({"sourceSha": os.environ["GITHUB_SHA"], "testsPassed": True, "formattingPatchSha256": hashlib.sha256(formatting).hexdigest(), "hasUncommittedFormatting": bool(formatting), "screenshots": screenshots, "devices": {k: v["name"] for k, v in selected.items()}}, indent=2) + "\n")
 
