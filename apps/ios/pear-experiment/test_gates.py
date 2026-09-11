@@ -78,6 +78,18 @@ class ExperimentAdmissionTests(unittest.TestCase):
         self.assertEqual(committed["bundleId"], "io.metahack.pear.mvp")
         self.assertNotEqual(committed["appId"], prepare.LEGACY_PEAR_APP_ID)
 
+    def test_shipping_targets_enable_designed_for_ipad_on_apple_silicon(self):
+        prepare = module("prepare")
+        source = prepare.yaml.safe_load((prepare.IOS / "project.yml").read_text())
+        prepared = json.loads(json.dumps(source))
+        prepare.enable_designed_for_ipad_on_mac(prepared)
+        self.assertEqual(prepared["targets"]["OpenClaw"]["settings"]["base"]["TARGETED_DEVICE_FAMILY"], "1,2")
+        for target_name in prepare.MAC_DESIGNED_TARGETS:
+            with self.subTest(target=target_name):
+                settings = prepared["targets"][target_name]["settings"]["base"]
+                self.assertEqual(settings["SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD"], "YES")
+                self.assertEqual(settings["SUPPORTS_MACCATALYST"], "NO")
+
     def test_screenshots_bound_to_successful_exact_source(self):
         gate = module("verify-evidence")
         sha = "a" * 40

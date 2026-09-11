@@ -16,6 +16,11 @@ SIMULATOR_BUNDLE = "io.metahack.pear.ols.validation"
 DISPLAY_NAME = "PEAR MVP"
 # The original PEAR app; this experiment ships as a separate app and must never build for it.
 LEGACY_PEAR_APP_ID = "6759186465"
+MAC_DESIGNED_TARGETS = (
+    "OpenClaw",
+    "OpenClawShareExtension",
+    "OpenClawActivityWidget",
+)
 
 
 def release_identity(config: dict, env: dict, *, simulator: bool) -> tuple[str, str]:
@@ -36,6 +41,21 @@ def release_identity(config: dict, env: dict, *, simulator: bool) -> tuple[str, 
     return bundle, team
 
 
+def enable_designed_for_ipad_on_mac(project: dict) -> None:
+    """Make the shipping iOS products explicitly eligible for Apple-silicon Macs.
+
+    This is Apple's compatibility path for the same iPhone/iPad binary, not a
+    Catalyst or native macOS target.
+    """
+    for target_name in MAC_DESIGNED_TARGETS:
+        target = project["targets"].get(target_name)
+        if target is None:
+            raise ValueError(f"Missing required Mac-compatible target: {target_name}")
+        settings = target.setdefault("settings", {}).setdefault("base", {})
+        settings["SUPPORTS_MACCATALYST"] = "NO"
+        settings["SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD"] = "YES"
+
+
 def prepare(*, simulator: bool, build_number: str) -> Path:
     if not re.fullmatch(r"[1-9][0-9]*", build_number):
         raise ValueError("Build number must be a positive integer")
@@ -46,6 +66,7 @@ def prepare(*, simulator: bool, build_number: str) -> Path:
     app = project["targets"]["OpenClaw"]
     app["info"]["properties"]["CFBundleDisplayName"] = DISPLAY_NAME
     app["info"]["properties"]["ITSAppUsesNonExemptEncryption"] = False
+    enable_designed_for_ipad_on_mac(project)
     for value in project["targets"].values():
         info = value.get("info", {}).get("properties", {})
         if isinstance(info.get("CFBundleDisplayName"), str):
