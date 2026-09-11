@@ -157,9 +157,6 @@ module PearOLSRelease
   rescue StandardError => error
     { available: false, reason: error.class.to_s }
   end
-  rescue StandardError => error
-    { available: false, reason: error.class.to_s }
-  end
 
   def self.status_of(path)
     request("GET", path)
