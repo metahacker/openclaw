@@ -247,6 +247,48 @@ module PearOLSRelease
     end
   end
 
+  # Alex-approved cleanup (2026-09-13, #pear-mvp thread 1789353575.442919): revoke ONLY the
+  # ten CI-minted "Created via API" DEVELOPMENT certificates with exactly these expiries,
+  # keep every other certificate. Fails closed on any difference from this multiset.
+  APPROVED_CI_DEV_CERT_EXPIRIES = %w[2027-07-22 2027-07-23 2027-07-24 2027-07-25
+                                     2027-09-11 2027-09-11 2027-09-11 2027-09-11 2027-09-11 2027-09-11].freeze
+  PROTECTED_CERT_NAME = "Egor Veremeychik".freeze
+
+  def self.development_certificates
+    data = request("GET", "/v1/certificates?filter[certificateType]=DEVELOPMENT,IOS_DEVELOPMENT&limit=200")
+    (data["data"] || []).map do |c|
+      a = c["attributes"] || {}
+      { id: c["id"], name: a["displayName"].to_s, type: a["certificateType"], expires: a["expirationDate"].to_s[0, 10] }
+    end
+  end
+
+  def self.revoke_ci_development_certificates
+    before = development_certificates
+    candidates = before.select { |c| c[:name] == "Created via API" && %w[DEVELOPMENT IOS_DEVELOPMENT].include?(c[:type]) }
+    others = before - candidates
+    receipt = { approvedExpiries: APPROVED_CI_DEV_CERT_EXPIRIES, protectedName: PROTECTED_CERT_NAME, before: before, revocations: [], state: "refused" }
+    unless candidates.map { |c| c[:expires] }.sort == APPROVED_CI_DEV_CERT_EXPIRIES.sort
+      receipt[:reason] = "live CI-created development certificates differ from the approved multiset"
+      return receipt
+    end
+    unless others.length == 1 && others.first[:name] == PROTECTED_CERT_NAME
+      receipt[:reason] = "unexpected non-CI development certificates present; nothing revoked"
+      return receipt
+    end
+    candidates.each do |c|
+      result = begin
+        request("DELETE", "/v1/certificates/#{c[:id]}")
+        "204"
+      rescue StandardError => error
+        error.message[/HTTP (\d+)/, 1] || "error"
+      end
+      receipt[:revocations] << c.merge(result: result)
+    end
+    receipt[:after] = development_certificates
+    receipt[:state] = receipt[:revocations].all? { |r| r[:result] == "204" } ? "revoked" : "partial"
+    receipt
+  end
+
   # Which provisioning endpoints this key may use. Xcode's automatic signing needs
   # certificates/identifiers/profiles access; only HTTP status codes are recorded.
   def self.key_scope
@@ -315,6 +357,12 @@ platform :ios do
     UI.important("Provisioning facts: #{JSON.generate(provisioning_facts)}")
     if ENV["PEAR_OLS_PROVISION_ONLY"] == "true"
       # Evidence and authorized setup only: no build-number allocation, archive, or upload.
+      if ENV["PEAR_OLS_REVOKE_CI_DEV_CERTS"] == "true"
+        cleanup = PearOLSRelease.revoke_ci_development_certificates
+        UI.important("Certificate cleanup: #{JSON.generate(cleanup)}")
+        File.write(File.join(evidence, "certificate-cleanup-receipt.json"), JSON.pretty_generate(cleanup) + "\n")
+        UI.user_error!("Certificate cleanup refused: #{cleanup[:reason]}") if cleanup[:state] == "refused"
+      end
       role_facts = PearOLSRelease.key_role_facts(bundle_id)
       registrations = PearOLSRelease.ensure_registrations(bundle_id)
       after = PearOLSRelease.provisioning_facts([bundle_id, "#{bundle_id}.share", "#{bundle_id}.activitywidget", "#{bundle_id}.watchkitapp"])

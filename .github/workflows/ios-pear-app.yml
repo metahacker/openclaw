@@ -18,6 +18,11 @@ on:
         required: false
         default: false
         type: boolean
+      revoke_ci_dev_certs:
+        description: With provision_only, revoke exactly the ten Alex-approved CI-created development certificates (fails closed on any difference)
+        required: false
+        default: false
+        type: boolean
       xcode_auth_probe:
         description: With provision_only, also archive a trivial app to probe Xcode signing (consumes a development-certificate slot)
         required: false
@@ -124,6 +129,7 @@ jobs:
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
           MATCH_GIT_PAT: ${{ secrets.MATCH_GIT_PAT }}
           PEAR_OLS_PROVISION_ONLY: ${{ inputs.provision_only }}
+          PEAR_OLS_REVOKE_CI_DEV_CERTS: ${{ inputs.revoke_ci_dev_certs }}
         run: pnpm ios:release:upload
       - name: Probe Xcode automatic-signing authentication (provision-only, opt-in)
         if: inputs.provision_only == true && inputs.xcode_auth_probe == true
@@ -141,5 +147,6 @@ jobs:
             apps/ios/build/pear-ols-evidence/release-receipt.json
             apps/ios/build/pear-ols-evidence/archive-log.txt
             apps/ios/build/pear-ols-evidence/xcode-auth-probe.json
+            apps/ios/build/pear-ols-evidence/certificate-cleanup-receipt.json
           if-no-files-found: warn
           retention-days: 30
