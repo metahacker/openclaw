@@ -343,7 +343,11 @@ platform :ios do
     private_key = ENV.fetch("ASC_KEY_CONTENT").strip
     private_key = private_key.include?("BEGIN PRIVATE KEY") ? private_key.gsub('\\n', "\n") : Base64.strict_decode64(private_key)
     private_key += "\n" unless private_key.end_with?("\n")
-    private_key, original_der_size, canonical_der_size = PearOLSRelease.canonical_p8(private_key)
+    # Same canonical form the successful archive-free probe used: openssl's PKCS#8 output.
+    original_der_size = Base64.decode64(private_key.lines.reject { |line| line.include?("-----") }.join).bytesize
+    private_key, openssl_err, openssl_status = Open3.capture3("openssl", "pkey", stdin_data: private_key)
+    UI.user_error!("openssl could not read the App Store Connect key (#{openssl_err.strip[0, 80]})") unless openssl_status.success?
+    canonical_der_size = Base64.decode64(private_key.lines.reject { |line| line.include?("-----") }.join).bytesize
     UI.important("App Store Connect key DER bytes: stored=#{original_der_size} canonical=#{canonical_der_size}")
     api_key = app_store_connect_api_key(key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"), key_content: private_key, is_key_content_base64: false)
     app = Spaceship::ConnectAPI::App.get(app_id: app_id)

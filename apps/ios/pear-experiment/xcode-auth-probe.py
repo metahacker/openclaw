@@ -42,24 +42,33 @@ def redact(text: str) -> str:
     return text
 
 
-def make_project(root: Path, entitlements: bool = False) -> Path:
+ENTITLEMENT_SETS = {
+    "none": {},
+    "healthkit": {"com.apple.developer.healthkit": "<true/>"},
+    "aps": {"aps-environment": "<string>production</string>"},
+    "appgroup": {"com.apple.security.application-groups": "<array><string>group.{bundle}.shared</string></array>"},
+    "all": {
+        "aps-environment": "<string>production</string>",
+        "com.apple.security.application-groups": "<array><string>group.{bundle}.shared</string></array>",
+        "com.apple.developer.healthkit": "<true/>",
+    },
+}
+
+
+def make_project(root: Path, entitlements: dict | None = None) -> Path:
     (root / "Sources").mkdir(parents=True, exist_ok=True)
-    entitlement_block = ""
-    if entitlements:
-        (root / "Probe.entitlements").write_text(textwrap.dedent(f'''
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0"><dict>
-              <key>aps-environment</key><string>production</string>
-              <key>com.apple.security.application-groups</key><array><string>group.{BUNDLE}.shared</string></array>
-              <key>com.apple.developer.healthkit</key><true/>
-            </dict></plist>
-        ''').lstrip())
-        entitlement_block = "        CODE_SIGN_ENTITLEMENTS: Probe.entitlements\n"
     (root / "Sources/ProbeApp.swift").write_text(textwrap.dedent('''
         import SwiftUI
         @main struct ProbeApp: App { var body: some Scene { WindowGroup { Text("probe") } } }
     '''))
+    entitlement_block = ""
+    if entitlements:
+        body = "".join(f"  <key>{key}</key>{value.format(bundle=BUNDLE)}\n" for key, value in entitlements.items())
+        (root / "Probe.entitlements").write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+            f'<plist version="1.0"><dict>\n{body}</dict></plist>\n')
+        entitlement_block = "        CODE_SIGN_ENTITLEMENTS: Probe.entitlements\n"
     (root / "project.yml").write_text(textwrap.dedent(f'''
         name: PearAuthProbe
         options:
@@ -131,17 +140,14 @@ def main() -> None:
         "defaultKeychain": subprocess.run(["security", "default-keychain"], capture_output=True, text=True).stdout.strip().replace('"', "").split("/")[-1],
         "variants": {},
     }
-    distribution = ["CODE_SIGN_IDENTITY=Apple Distribution"]
     try:
         with tempfile.TemporaryDirectory(prefix="pear-auth-probe-") as tmp:
             env = dict(os.environ)
-            project = make_project(Path(tmp))
-            # Development identity hits the team's development-certificate cap; Apple-managed
-            # distribution signing needs no local certificate and the distribution slot is free.
-            report["variants"]["development-identity"] = archive(project, auth, env)
-            report["variants"]["distribution-identity"] = archive(project, auth + distribution, env)
-            project = make_project(Path(tmp), entitlements=True)
-            report["variants"]["distribution-identity+entitlements"] = archive(project, auth + distribution, env)
+            # Development identity, entitlement sets in isolation: the real archive only
+            # reports "Authentication failed" on the two targets that carry entitlements.
+            for label, entitlements in ENTITLEMENT_SETS.items():
+                project = make_project(Path(tmp), entitlements)
+                report["variants"][f"development+{label}"] = archive(project, auth, env)
     except Exception as error:  # the partial report is the evidence; keep it
         report["probeError"] = redact(str(error))[:400]
     for directory in (home / "private_keys", home / ".appstoreconnect/private_keys", home / ".private_keys"):
