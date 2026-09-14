@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import subprocess
+import zipfile
 
 
 def module(name):
@@ -89,6 +90,31 @@ class ExperimentAdmissionTests(unittest.TestCase):
                 settings = prepared["targets"][target_name]["settings"]["base"]
                 self.assertEqual(settings["SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD"], "YES")
                 self.assertEqual(settings["SUPPORTS_MACCATALYST"], "NO")
+
+    def test_ipa_extraction_accepts_aliased_temp_root_and_rejects_escapes(self):
+        verify_ipa = module("verify-ipa")
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "physical").mkdir()
+            # Mirror macOS, where tempfile returns /var/... while resolve() yields /private/var/...
+            (directory / "alias").symlink_to("physical")
+            root = directory / "alias" / "extract"
+            root.mkdir()
+
+            def ipa(name, entries):
+                path = directory / name
+                with zipfile.ZipFile(path, "w") as archive:
+                    for entry in entries:
+                        archive.writestr(entry, b"synthetic")
+                return path
+
+            extracted = verify_ipa.extract_ipa(ipa("good.ipa", ["Payload/OpenClaw.app/Info.plist"]), root)
+            self.assertTrue((extracted / "Payload/OpenClaw.app/Info.plist").is_file())
+            for entry in ["../escape", "Payload/../../escape", str(directory / "absolute-escape")]:
+                with self.subTest(entry=entry), self.assertRaises(ValueError):
+                    verify_ipa.extract_ipa(ipa("bad.ipa", ["Payload/OpenClaw.app/Info.plist", entry]), root)
+                self.assertFalse((directory / "escape").exists())
+                self.assertFalse((directory / "absolute-escape").exists())
 
     def test_screenshots_bound_to_successful_exact_source(self):
         gate = module("verify-evidence")

@@ -24,6 +24,22 @@ def expected_bundle_id(config: dict, env: dict) -> str:
     return bundle
 
 
+def extract_ipa(ipa: Path, root: Path) -> Path:
+    """Extract the IPA only when every entry stays inside the canonical root.
+
+    macOS temporary directories are handed out through the /var -> /private/var
+    alias, so the root itself must be resolved before it is compared against the
+    resolved entry paths; otherwise every legitimate entry looks like an escape.
+    """
+    root = root.resolve()
+    with zipfile.ZipFile(ipa) as archive:
+        for item in archive.infolist():
+            if not (root / item.filename).resolve().is_relative_to(root):
+                raise ValueError(f"Unsafe IPA archive path: {item.filename}")
+        archive.extractall(root)
+    return root
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("ipa", type=Path)
@@ -32,13 +48,7 @@ def main():
     config = json.loads((Path(__file__).parent / "release.json").read_text())
     expected_bundle = expected_bundle_id(config, dict(os.environ))
     with tempfile.TemporaryDirectory() as temp:
-        root = Path(temp)
-        with zipfile.ZipFile(args.ipa) as archive:
-            for item in archive.infolist():
-                path = root / item.filename
-                if not path.resolve().is_relative_to(root):
-                    raise ValueError("Unsafe IPA archive path")
-            archive.extractall(root)
+        root = extract_ipa(args.ipa, Path(temp))
         apps = list((root / "Payload").glob("*.app"))
         if len(apps) != 1:
             raise ValueError("IPA must contain one main application")
