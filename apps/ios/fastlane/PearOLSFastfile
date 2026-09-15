@@ -59,6 +59,37 @@ module PearOLSRelease
     Spaceship::ConnectAPI.get_build_uploads(app_id: app_id, filter: { platform: "IOS" }, includes: nil, limit: 200, sort: nil).all_pages.flat_map(&:to_models)
   end
 
+  # Xcode 26's app-store export under automatic signing with -allowProvisioningUpdates
+  # and API-key auth registers an empty buildUploads placeholder for the exported
+  # build number, even with manageAppVersionAndBuildNumber off (runs 34813742964 and
+  # 34914757132: AWAITING_UPLOAD, no files, no build, created seconds after
+  # "Archive Succeeded"). Apple counts it as a consumed number and next_build refuses
+  # it as unresolved, so a run that fails after export blocks every later release.
+  # Remove only a placeholder this run provably created: unknown before the archive,
+  # AWAITING_UPLOAD, this version and build number, never uploaded, no files, no
+  # build. Anything else is left in place and fails the unchanged recheck.
+  def self.reconcile_export_placeholders(app, version, build_number, known_ids)
+    removed = []
+    app_store_uploads(app.id).each do |upload|
+      next if known_ids.include?(upload.id)
+      detail = request("GET", "/v1/buildUploads/#{upload.id}?include=build")
+      data = detail.fetch("data")
+      attributes = data.fetch("attributes")
+      state = attributes.dig("state", "state").to_s
+      files = request("GET", "/v1/buildUploads/#{upload.id}/buildUploadFiles?limit=1").dig("meta", "paging", "total").to_i
+      own = state == "AWAITING_UPLOAD" &&
+            attributes["uploadedDate"].nil? &&
+            attributes["cfBundleShortVersionString"].to_s == version &&
+            attributes["cfBundleVersion"].to_s == build_number.to_s &&
+            data.dig("relationships", "build", "data").nil? &&
+            files.zero?
+      raise "Unexpected Apple upload appeared during archive (state #{state}, files #{files}); reconcile it before a new release" unless own
+      request("DELETE", "/v1/buildUploads/#{upload.id}")
+      removed << { id: upload.id, createdDate: attributes["createdDate"], state: state }
+    end
+    removed
+  end
+
   # Copy the raw xcodebuild log into the proof directory with key material removed.
   def self.preserve_archive_log(directory, target)
     logs = Dir.glob(File.join(directory, "*.log")).sort_by { |path| File.mtime(path) }
@@ -355,6 +386,9 @@ platform :ios do
     UI.user_error!("Resolved App Store Connect app is the original PEAR app") if app.id.to_s == PearOLSRelease::LEGACY_PEAR_APP_ID
     group = PearOLSRelease.internal_group(app)
     build_number = PearOLSRelease.next_build(app)
+    # Every upload Apple shows now is resolved (next_build passed); anything new
+    # after the archive is a candidate export placeholder.
+    known_upload_ids = PearOLSRelease.app_store_uploads(app.id).map(&:id)
     key_scope = PearOLSRelease.key_scope
     UI.important("App Store Connect key scope (HTTP): #{key_scope.map { |k, v| "#{k}=#{v}" }.join(" ")}")
     provisioning_facts = PearOLSRelease.provisioning_facts([bundle_id, "#{bundle_id}.share", "#{bundle_id}.activitywidget", "#{bundle_id}.watchkitapp"])
@@ -402,11 +436,10 @@ platform :ios do
     # signing diagnostics, and a redacted copy is the only way to see why a profile
     # or capability could not be provisioned on a hosted runner.
     archive_logs = File.join(evidence, "archive-logs")
-    # Export only. With Xcode's default manageAppVersionAndBuildNumber, the Xcode 26
-    # app-store export contacts App Store Connect and registers an empty buildUploads
-    # record (AWAITING_UPLOAD, no files) for the planned build number; a run that fails
-    # after export then leaves that record behind and next_build refuses every later
-    # release. The lane owns allocation, so Xcode must not manage or reserve numbers.
+    # Export only, with Xcode's build-number management off (same contract as the
+    # upstream lane). The lane owns allocation; Xcode must never rewrite the number
+    # verify-ipa checks. Xcode 26 still registers an empty upload placeholder during
+    # this export; reconcile_export_placeholders removes it before the recheck.
     begin
       ipa = build_app(project: File.join(ios, "OpenClaw.xcodeproj"), scheme: "OpenClaw", configuration: "Release", export_method: "app-store", clean: true, skip_profile_detection: true, output_directory: File.join(ios, "build/pear-ols-release"), output_name: "PEAR-OLS.ipa", xcargs: "DEVELOPMENT_TEAM=#{config.fetch("teamId")} -allowProvisioningUpdates #{auth_args}", export_xcargs: "-allowProvisioningUpdates", buildlog_path: archive_logs, export_options: { signingStyle: "automatic", teamID: config.fetch("teamId"), destination: "export", manageAppVersionAndBuildNumber: false })
     rescue StandardError => error
@@ -414,6 +447,9 @@ platform :ios do
       raise error
     end
     sh("python3", File.join(ios, "pear-experiment/verify-ipa.py"), ipa, "--build-number", build_number.to_s)
+    placeholders = PearOLSRelease.reconcile_export_placeholders(app, config.fetch("version"), build_number, known_upload_ids)
+    UI.important("Removed export placeholder upload(s): #{JSON.generate(placeholders)}") unless placeholders.empty?
+    plan[:exportPlaceholdersRemoved] = placeholders
     # Re-read the Apple-owned allocation immediately before the only upload attempt.
     UI.user_error!("Apple upload state changed during archive; re-plan on the next workflow run") unless PearOLSRelease.next_build(app) == build_number
     sh("python3", File.join(ios, "pear-experiment/verify-evidence.py"), evidence, ENV.fetch("GITHUB_SHA"), "--require-committed-formatting")
