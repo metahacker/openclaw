@@ -11,7 +11,10 @@ final class PearOLSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["ols.voice"].exists)
         let context = app.buttons["ols.context"]
         XCTAssertTrue(context.waitForExistence(timeout: 5))
-        XCTAssertEqual(context.value as? String, "#japan-family-trip")
+        let contextHashtag = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "#japan-family-trip"),
+            object: context)
+        XCTAssertEqual(XCTWaiter.wait(for: [contextHashtag], timeout: 5), .completed)
         XCTAssertFalse(app.buttons["ols.object"].exists)
         XCTAssertTrue(app.buttons["ols.anchor.sample-japan-1"].exists)
         XCTAssertTrue(app.staticTexts["ols.commentary.commentary:sample"].exists)
