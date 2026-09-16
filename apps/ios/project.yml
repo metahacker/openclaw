@@ -195,6 +195,7 @@ targets:
         UIAppFonts:
           - RedHatDisplay[wght].ttf
           - Inter[opsz,wght].ttf
+          - Lora[wght].ttf
           - Inter-Italic[opsz,wght].ttf
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
@@ -301,6 +302,7 @@ targets:
         UIAppFonts:
           - RedHatDisplay[wght].ttf
           - Inter[opsz,wght].ttf
+          - Lora[wght].ttf
           - Inter-Italic[opsz,wght].ttf
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
@@ -405,6 +407,7 @@ targets:
         UIAppFonts:
           - RedHatDisplay[wght].ttf
           - Inter[opsz,wght].ttf
+          - Lora[wght].ttf
           - Inter-Italic[opsz,wght].ttf
           - JetBrainsMono-Regular.ttf
           - JetBrainsMono-Medium.ttf
