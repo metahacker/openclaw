@@ -146,6 +146,74 @@ struct PearOLSTimelineTests {
         await task.value
         #expect(model.messages.isEmpty)
     }
+    @Test func `anchors open each context run and horizontal steps move between neighbours`() {
+        let japan = OLSContext(segmentId: "a", projectId: 1, slug: "japan", label: "Japan", source: "named")
+        let mvp = OLSContext(segmentId: "b", projectId: 2, slug: "mvp", label: "MVP", source: "named")
+        let japanAgain = OLSContext(segmentId: "c", projectId: 1, slug: "japan", label: "Japan", source: "named")
+        let messages = [
+            OLSMessage(id: "1", role: "user", text: "1", createdAt: "2026-09-16T07:00:00Z", context: japan),
+            OLSMessage(id: "2", role: "assistant", text: "2", createdAt: "2026-09-16T07:01:00Z", context: japan),
+            OLSMessage(id: "3", role: "user", text: "3", createdAt: "2026-09-16T08:00:00Z", context: mvp),
+            OLSMessage(id: "4", role: "assistant", text: "4", createdAt: "2026-09-16T08:01:00Z", context: mvp),
+            OLSMessage(id: "5", role: "user", text: "5", createdAt: "2026-09-16T09:00:00Z", context: japanAgain),
+            OLSMessage(id: "6", role: "assistant", text: "6", createdAt: "2026-09-16T09:01:00Z", context: japanAgain),
+        ]
+        // Returning to Japan is a new anchor; the earlier Japan run keeps its own.
+        #expect(OLSModel.anchorIDs(messages) == ["1", "3", "5"])
+        #expect(OLSModel.nextAnchor(after: "2", in: messages) == "3")
+        #expect(OLSModel.nextAnchor(after: "6", in: messages) == nil)
+        #expect(OLSModel.nextAnchor(after: nil, in: messages) == "1")
+        #expect(OLSModel.previousAnchor(before: "4", in: messages) == "3")
+        #expect(OLSModel.previousAnchor(before: "3", in: messages) == "1")
+        #expect(OLSModel.previousAnchor(before: "1", in: messages) == nil)
+    }
+
+    @Test func `context check appears only for a provisional latest turn and dismisses once`() async {
+        let guessed = OLSContext(
+            segmentId: "g", projectId: 1, slug: "japan", label: "Japan", source: "heuristic", provisional: true)
+        let service = StubOLSService(pages: [
+            OLSTimeline(streamId: "pair", items: [
+                OLSMessage(id: "1", role: "user", text: "Kyoto?", createdAt: "2026-09-16T09:36:00Z", context: guessed),
+                OLSMessage(id: "2", role: "assistant", text: "Not yet.", createdAt: "2026-09-16T09:38:00Z", context: guessed),
+            ], hasMore: false, activeContext: guessed, segments: [
+                OLSSegment(id: "g", projectId: 1, slug: "japan", label: "Japan", source: "heuristic", provisional: true),
+            ]),
+        ])
+        let model = OLSModel(service: service)
+        await model.refresh()
+        #expect(model.contextCheck?.segmentId == "g")
+        #expect(model.segments.map(\.id) == ["g"])
+        model.dismissContextCheck()
+        #expect(model.contextCheck == nil)
+    }
+
+    @Test func `greeting and period labels come from the clock and the real name`() {
+        #expect(OLSModel.greeting(hour: 9, name: "Alex Markson") == "Good morning, Alex.")
+        #expect(OLSModel.greeting(hour: 14, name: nil) == "Good afternoon.")
+        #expect(OLSModel.greeting(hour: 21, name: " ") == "Good evening.")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let now = PearAPI.parseISODate("2026-09-16T09:41:00Z")!
+        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-09-16T07:38:00Z")!, now: now, calendar: calendar)
+            == "This morning")
+        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-09-15T20:00:00Z")!, now: now, calendar: calendar)
+            == "Yesterday")
+        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-08-12T20:00:00Z")!, now: now, calendar: calendar)
+            == "August 12")
+    }
+
+    @Test func `summary line uses only real project summaries`() {
+        #expect(OLSModel.summaryLine(projects: []) == "Your conversation is here when you want it.")
+        let projects = [
+            PearStatusData.Project(
+                id: 1, name: "Japan", updatedAt: "2026-09-16T09:00:00Z",
+                summary: "Tokyo is reconciled; one dinner remains open. Later detail."),
+            PearStatusData.Project(id: 2, name: "Quiet", updatedAt: "2026-09-16T08:00:00Z", summary: "  "),
+            PearStatusData.Project(id: 3, name: "MVP", updatedAt: "2026-09-15T08:00:00Z", summary: "Mark is tightening screens"),
+        ]
+        #expect(OLSModel.summaryLine(projects: projects)
+            == "Tokyo is reconciled; one dinner remains open. Mark is tightening screens.")
+    }
 }
 
 private actor StubOLSService: OLSService {

@@ -7,6 +7,12 @@ import Observation
 final class OLSModel {
     private(set) var messages: [OLSMessage] = []
     private(set) var activeContext: OLSContext?
+    /// Every segment the person owns, newest first, including ones not loaded yet.
+    private(set) var segments: [OLSSegment] = []
+    /// Display name from the signed-in identity; nil keeps the greeting nameless.
+    var personName: String?
+    /// The segment whose context-check card the person already answered.
+    private(set) var dismissedContextCheck: String?
     private(set) var hasMore = false
     private(set) var isLoading = false
     private(set) var isSending = false
@@ -44,6 +50,11 @@ final class OLSModel {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var selectionRevision = 0
     @ObservationIgnored private var storageKey: String?
+    /// Injectable clock so the screenshot fixture renders a stable date kicker.
+    @ObservationIgnored var now: () -> Date = { Date() }
+
+    /// Scroll target for the greeting block at the top of the present.
+    static let presentID = "ols-present"
 
     private struct SavedPlace: Codable {
         var draft: String
@@ -62,11 +73,19 @@ final class OLSModel {
             if let messageID = saved.messageID, !messageID.hasPrefix("commentary:") {
                 self.jump(to: messageID)
             } else {
-                self.visibleMessageID = nil
-                self.isAtPresent = true
+                self.showPresent()
             }
+        } else {
+            self.showPresent()
         }
         self.storageKey = key
+    }
+
+    /// Mark's first viewport: the date, greeting, and today's conversation from its start.
+    func showPresent() {
+        self.visibleMessageID = nil
+        self.isAtPresent = true
+        self.scrollRequest = ScrollRequest(messageID: Self.presentID, token: UUID())
     }
 
     func jump(to messageID: String) {
@@ -143,6 +162,7 @@ final class OLSModel {
             let wasEmpty = self.messages.isEmpty
             self.merge(page.items)
             self.activeContext = page.activeContext
+            if let segments = page.segments { self.segments = segments }
             if wasEmpty {
                 self.beforeCursor = page.beforeCursor
                 self.hasMore = page.hasMore
@@ -285,6 +305,9 @@ final class OLSModel {
         self.isSending = false
         self.messages = []
         self.activeContext = nil
+        self.segments = []
+        self.personName = nil
+        self.dismissedContextCheck = nil
         self.draft = ""
         self.pending = nil
         self.attachments = []
@@ -295,6 +318,161 @@ final class OLSModel {
         self.visibleMessageID = nil
         self.scrollRequest = nil
         self.hasMore = false
+    }
+
+    // MARK: - Inline anchors
+
+    /// IDs of the messages that open a new context segment, in timeline order.
+    /// Returning to a subject later opens a new anchor; earlier ones are never regrouped.
+    static func anchorIDs(_ messages: [OLSMessage]) -> [String] {
+        var previous: String?
+        var ids: [String] = []
+        for message in messages {
+            guard let segment = message.context?.segmentId else { continue }
+            if segment != previous { ids.append(message.id) }
+            previous = segment
+        }
+        return ids
+    }
+
+    var anchorIDs: [String] {
+        Self.anchorIDs(self.messages)
+    }
+
+    /// The anchor that opens the segment containing `messageID` (nil above the first anchor).
+    static func anchor(containing messageID: String?, in messages: [OLSMessage]) -> String? {
+        guard let messageID, let index = messages.firstIndex(where: { $0.id == messageID }) else { return nil }
+        let anchors = Set(self.anchorIDs(messages))
+        return messages[...index].last(where: { anchors.contains($0.id) })?.id
+    }
+
+    /// Swipe left: the anchor after the one the person is reading.
+    static func nextAnchor(after messageID: String?, in messages: [OLSMessage]) -> String? {
+        let anchors = self.anchorIDs(messages)
+        guard let current = self.anchor(containing: messageID, in: messages),
+              let index = anchors.firstIndex(of: current)
+        else { return anchors.first }
+        return anchors.indices.contains(index + 1) ? anchors[index + 1] : nil
+    }
+
+    /// Swipe right: the start of the current segment, or the previous anchor when already there.
+    static func previousAnchor(before messageID: String?, in messages: [OLSMessage]) -> String? {
+        let anchors = self.anchorIDs(messages)
+        guard let messageID, let current = self.anchor(containing: messageID, in: messages),
+              let index = anchors.firstIndex(of: current)
+        else { return nil }
+        if current != messageID { return current }
+        return index > 0 ? anchors[index - 1] : nil
+    }
+
+    func nextAnchor() -> String? {
+        Self.nextAnchor(after: self.visibleMessageID, in: self.messages)
+    }
+
+    func previousAnchor() -> String? {
+        Self.previousAnchor(before: self.visibleMessageID, in: self.messages)
+    }
+
+    /// The first loaded message of a segment; pages back a bounded number of times to find it.
+    func jump(toSegment segmentID: String) async {
+        for _ in 0..<6 {
+            if let id = self.messages.first(where: { $0.context?.segmentId == segmentID })?.id {
+                self.jump(to: id)
+                return
+            }
+            guard self.hasMore, !self.isPaging else { break }
+            await self.loadEarlier()
+        }
+        if let id = self.messages.first(where: { $0.context?.segmentId == segmentID })?.id { self.jump(to: id) }
+    }
+
+    // MARK: - Context check
+
+    /// The latest turn's context when the backend only guessed it; the person can keep or change it.
+    var contextCheck: OLSContext? {
+        guard let latest = self.messages.last(where: { !$0.isCommentary && !$0.isAssistant }),
+              let context = latest.context, context.provisional == true,
+              context.segmentId != self.dismissedContextCheck
+        else { return nil }
+        return context
+    }
+
+    func dismissContextCheck() {
+        self.dismissedContextCheck = self.contextCheck?.segmentId
+    }
+
+    // MARK: - Present block
+
+    /// ID of the first message from today; the greeting sits right above it.
+    var presentMessageID: String? {
+        let calendar = Calendar.autoupdatingCurrent
+        let today = self.now()
+        return self.messages.first(where: { message in
+            guard let date = PearAPI.parseISODate(message.createdAt) else { return false }
+            return calendar.isDate(date, inSameDayAs: today)
+        })?.id
+    }
+
+    static func greeting(hour: Int, name: String?) -> String {
+        let opening = switch hour {
+        case 5..<12: "Good morning"
+        case 12..<17: "Good afternoon"
+        default: "Good evening"
+        }
+        guard let first = name?.split(separator: " ").first.map(String.init), !first.isEmpty else {
+            return opening + "."
+        }
+        return "\(opening), \(first)."
+    }
+
+    var greeting: String {
+        Self.greeting(hour: Calendar.autoupdatingCurrent.component(.hour, from: self.now()), name: self.personName)
+    }
+
+    /// `Monday · August 17`, uppercased by the kicker style.
+    var dateKicker: String {
+        let day = self.now()
+        return day.formatted(.dateTime.weekday(.wide)) + " · " + day.formatted(.dateTime.month(.wide).day())
+    }
+
+    /// `This morning` / `Yesterday` / `August 12`: the day-part label that precedes a run of messages.
+    static func periodLabel(for date: Date, now: Date, calendar: Calendar = .autoupdatingCurrent) -> String {
+        if calendar.isDate(date, inSameDayAs: now) {
+            return switch calendar.component(.hour, from: date) {
+            case ..<12: "This morning"
+            case 12..<17: "This afternoon"
+            default: "This evening"
+            }
+        }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        if calendar.component(.year, from: date) == calendar.component(.year, from: now) {
+            return date.formatted(.dateTime.month(.wide).day())
+        }
+        return date.formatted(.dateTime.month(.wide).day().year())
+    }
+
+    func periodLabel(for message: OLSMessage) -> String? {
+        guard let date = PearAPI.parseISODate(message.createdAt) else { return nil }
+        return Self.periodLabel(for: date, now: self.now())
+    }
+
+    /// One calm sentence built only from real project summaries; never invented.
+    static func summaryLine(projects: [PearStatusData.Project]) -> String {
+        let recent = projects.sorted { ($0.updatedDate ?? .distantPast) > ($1.updatedDate ?? .distantPast) }
+        var sentences: [String] = []
+        for project in recent {
+            guard let summary = project.bestSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !summary.isEmpty
+            else { continue }
+            let plain = (try? AttributedString(markdown: summary)).map { String($0.characters) } ?? summary
+            let first = plain.split(whereSeparator: { $0 == "\n" }).first.map(String.init) ?? plain
+            let sentence = first.components(separatedBy: ". ").first ?? first
+            let trimmed = sentence.trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+            guard !trimmed.isEmpty, trimmed.count <= 110 else { continue }
+            sentences.append(trimmed + ".")
+            if sentences.count == 2 { break }
+        }
+        return sentences.isEmpty ? "Your conversation is here when you want it." : sentences.joined(separator: " ")
     }
 
     private func merge(_ incoming: [OLSMessage]) {
@@ -315,46 +493,96 @@ final class OLSModel {
     }
 
     #if DEBUG
+    /// Synthetic projects for the CI proof images only; never shown above a real account.
+    static let screenshotProjects: [PearStatusData.Project] = [
+        PearStatusData.Project(
+            id: 1, slug: "japan-family-trip", name: "Japan family trip", emoji: "🗾", category: "Travel",
+            updatedAt: "2026-09-16T09:40:00Z", summary: "Tokyo is reconciled; one Kyoto dinner remains open."),
+        PearStatusData.Project(
+            id: 2, slug: "pear-mvp", name: "PEAR MVP", emoji: "🍐", category: "Product",
+            updatedAt: "2026-09-16T09:29:00Z", summary: "Mark is tightening five complete long-form screens."),
+        PearStatusData.Project(
+            id: 3, slug: "new-york-arrangements", name: "New York arrangements", emoji: "🗽", category: "Family",
+            updatedAt: "2026-09-15T18:00:00Z", summary: "Travel and family coordination are current."),
+    ]
+
+    /// A → B → A: two Japan segments around one PEAR MVP segment, one attachment card, one
+    /// provisional context check. Fixed clock so the kicker and labels are stable in CI.
     func installScreenshotFixture() {
-        let context = OLSContext(
-            segmentId: "sample-garden", projectId: 1, slug: "weekend-garden", label: "Weekend garden", source: "sample")
-        let next = OLSContext(
-            segmentId: "sample-trip", projectId: 2, slug: "summer-trip", label: "Summer trip", source: "sample")
+        self.now = { PearAPI.parseISODate("2026-09-16T09:41:00Z") ?? Date() }
+        self.personName = "Alex"
+        let japan = OLSContext(
+            segmentId: "sample-japan-1", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
+            source: "named", provisional: false)
+        let mvp = OLSContext(
+            segmentId: "sample-mvp", projectId: 2, slug: "pear-mvp", label: "PEAR MVP", source: "named",
+            provisional: false)
+        let japanAgain = OLSContext(
+            segmentId: "sample-japan-2", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
+            source: "heuristic", provisional: true)
         self.messages = [
             OLSMessage(
                 id: "1",
                 role: "user",
-                text: "Can we keep Saturday afternoon free?",
-                createdAt: "2026-09-09T10:00:00Z",
-                context: context),
+                text: "Our Tokyo hotel moved check-in. Can you make sure the quieter afternoon still works?",
+                createdAt: "2026-09-16T07:38:00Z",
+                context: japan),
+            OLSMessage(
+                id: "2",
+                role: "assistant",
+                text: "I moved the slower afternoon forward and kept the family dinner open. "
+                    + "The route and reservations still agree.",
+                createdAt: "2026-09-16T07:40:00Z",
+                context: japan,
+                attachments: [OLSAttachment(
+                    id: "sample-plan",
+                    url: "https://pear.metahack.io/api/ols/files/sample-plan",
+                    name: "Tokyo day plan.pdf",
+                    mimeType: "application/pdf")]),
+            OLSMessage(
+                id: "3",
+                role: "user",
+                text: "Back to the MVP UI—give Mark complete screens, not a design system.",
+                createdAt: "2026-09-16T09:27:00Z",
+                context: mvp),
             OLSMessage(
                 id: "commentary:sample",
                 kind: "commentary",
                 role: "assistant",
-                text: "I’m keeping Saturday open while I check the morning plan.",
-                createdAt: "2026-09-09T10:00:30Z",
-                context: context),
-            OLSMessage(
-                id: "2",
-                role: "assistant",
-                text: "The morning plan still fits. Saturday afternoon stays open, "
-                    + "and the plant list is ready when you want it.",
-                createdAt: "2026-09-09T10:01:00Z",
-                context: context),
-            OLSMessage(
-                id: "3",
-                role: "user",
-                text: "And where did we leave the summer trip?",
-                createdAt: "2026-09-09T10:02:00Z",
-                context: next),
+                text: "I’m laying out the whole composition before extracting anything.",
+                createdAt: "2026-09-16T09:28:00Z",
+                context: mvp),
             OLSMessage(
                 id: "4",
                 role: "assistant",
-                text: "The itinerary is together. The only open question is which evening to leave unplanned.",
-                createdAt: "2026-09-09T10:03:00Z",
-                context: next),
+                text: "Whole composition first. I’ll extract the system after the visual language coheres.",
+                createdAt: "2026-09-16T09:29:00Z",
+                context: mvp),
+            OLSMessage(
+                id: "5",
+                role: "user",
+                text: "And the Kyoto dinner—did that get settled?",
+                createdAt: "2026-09-16T09:36:00Z",
+                context: japanAgain),
+            OLSMessage(
+                id: "6",
+                role: "assistant",
+                text: "Not yet. Two good paths remain, and no reservation has been made.",
+                createdAt: "2026-09-16T09:38:00Z",
+                context: japanAgain),
         ]
-        self.activeContext = next
+        self.segments = [
+            OLSSegment(
+                id: "sample-japan-2", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
+                source: "heuristic", provisional: true, createdAt: "2026-09-16T09:36:00Z"),
+            OLSSegment(
+                id: "sample-mvp", projectId: 2, slug: "pear-mvp", label: "PEAR MVP", source: "named",
+                provisional: false, createdAt: "2026-09-16T09:27:00Z"),
+            OLSSegment(
+                id: "sample-japan-1", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
+                source: "named", provisional: false, createdAt: "2026-09-16T07:38:00Z"),
+        ]
+        self.activeContext = japanAgain
     }
     #endif
 }

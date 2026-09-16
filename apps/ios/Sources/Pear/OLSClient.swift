@@ -6,9 +6,17 @@ struct OLSContext: Codable, Equatable, Identifiable, Sendable {
     var slug: String?
     var label: String?
     var source: String?
+    /// The backend resolved this context heuristically; the person may correct it.
+    var provisional: Bool?
 
     var id: String {
         self.segmentId
+    }
+
+    /// `Japan family trip` when the project is known, otherwise the hashtag.
+    var displayName: String {
+        if let label, !label.trimmingCharacters(in: .whitespaces).isEmpty { return label }
+        return self.hashtag
     }
 
     var hashtag: String {
@@ -62,12 +70,31 @@ struct OLSProgressFeed: Codable, Equatable, Sendable {
     var statuses: [OLSProgressStatus]
 }
 
+/// One chronological run of turns inside a project; the server lists every segment the
+/// person owns, including ones whose messages are not loaded yet.
+struct OLSSegment: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var projectId: Int?
+    var slug: String?
+    var label: String?
+    var source: String?
+    var provisional: Bool?
+    var createdAt: String?
+
+    var context: OLSContext {
+        OLSContext(
+            segmentId: self.id, projectId: self.projectId, slug: self.slug, label: self.label,
+            source: self.source, provisional: self.provisional)
+    }
+}
+
 struct OLSTimeline: Codable, Sendable {
     var streamId: String
     var items: [OLSMessage]
     var beforeCursor: String?
     var hasMore: Bool
     var activeContext: OLSContext?
+    var segments: [OLSSegment]?
     var status: String?
 }
 
@@ -76,6 +103,7 @@ struct OLSSendReceipt: Codable, Sendable {
     var id: Int?
     var clientRequestId: String?
     var segmentId: String?
+    var context: OLSContext?
     var page: String?
     var status: String?
     var error: String?
