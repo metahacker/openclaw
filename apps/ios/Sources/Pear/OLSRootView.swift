@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The app frame: Mark's header (mark + `pear` wordmark, voice button), one surface at a
-/// time underneath. Chat is home; Details and Project sit under it; Voice is a side room.
+/// The prototype's stage: the thread is home, Projects rises from the bottom edge, a project
+/// opens from Projects, and Voice slides in from the header's presence button.
 struct OLSRootView: View {
     @Environment(NodeAppModel.self) private var appModel
     @Environment(\.scenePhase) private var scenePhase
@@ -9,14 +9,16 @@ struct OLSRootView: View {
     @State private var auth = PearAuthModel()
     @State private var model = OLSModel()
     @State private var projects: [PearStatusData.Project] = []
+    @State private var activeDetail: OLSProjectDetail?
     @State private var openedProject: PearStatusData.Project?
     @State private var surface: Surface = .chat
     @State private var voiceOrigin: Surface = .chat
     @State private var showContext = false
+    @State private var showProfile = false
     @State private var showDeviceControls = false
     @State private var projectError: String?
 
-    enum Surface { case chat, details, project, voice }
+    enum Surface { case chat, projects, project, voice }
 
     private var screenshotMode: Bool {
         #if DEBUG
@@ -26,16 +28,76 @@ struct OLSRootView: View {
         #endif
     }
 
+    private var signedIn: Bool {
+        self.auth.isSignedIn || self.screenshotMode
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            self.header
-            if self.auth.isSignedIn || self.screenshotMode {
-                self.content
-            } else {
-                self.signIn
+        ZStack {
+            VStack(spacing: 0) {
+                self.header
+                if self.signedIn {
+                    OLSTimelineView(
+                        model: self.model,
+                        projects: self.projects,
+                        activeDetail: self.activeDetail,
+                        openContext: { self.showContext = true },
+                        openProjects: { self.navigate(.projects) },
+                        openProject: { project in
+                            self.openedProject = project
+                            self.navigate(.project)
+                        },
+                        openVoice: { self.navigate(.voice) })
+                } else {
+                    self.signIn
+                }
+            }
+            .opacity(self.surface == .chat ? 1 : 0)
+            .allowsHitTesting(self.surface == .chat)
+            .accessibilityHidden(self.surface != .chat)
+            if self.surface == .projects || self.surface == .project {
+                OLSProjectsView(
+                    model: self.model,
+                    projects: self.projects,
+                    projectError: self.projectError,
+                    retry: { Task { await self.begin() } },
+                    onReturn: { self.navigate(.chat) },
+                    openProject: { project in
+                        self.openedProject = project
+                        self.navigate(.project)
+                    },
+                    openVoice: { self.navigate(.voice) },
+                    jumpToSegment: self.jump(toSegment:))
+                    .opacity(self.surface == .projects ? 1 : 0)
+                    .allowsHitTesting(self.surface == .projects)
+                    .accessibilityHidden(self.surface != .projects)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            if self.surface == .project, let project = self.openedProject {
+                OLSProjectView(
+                    project: project,
+                    model: self.model,
+                    back: { self.navigate(.projects) },
+                    returnToThread: { self.navigate(.chat) },
+                    openVoice: { self.navigate(.voice) },
+                    jumpToSegment: self.jump(toSegment:),
+                    talkAbout: { project in
+                        self.model.selectProject(project.id)
+                        self.navigate(.chat)
+                    })
+                    .id(project.id)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+            if self.surface == .voice {
+                OLSVoiceView(
+                    model: self.model,
+                    originLabel: self.originLabel,
+                    projectName: self.projects.first(where: { $0.id == self.model.activeContext?.projectId })?.name,
+                    onReturn: { self.navigate(self.voiceOrigin) })
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .background(OLSTheme.background)
+        .background(OLSTheme.field)
         .foregroundStyle(OLSTheme.ink)
         .tint(OLSTheme.accent)
         .statusBarHidden(false)
@@ -56,6 +118,7 @@ struct OLSRootView: View {
             } else {
                 self.model.clear()
                 self.projects = []
+                self.activeDetail = nil
                 self.openedProject = nil
                 self.surface = .chat
             }
@@ -64,7 +127,12 @@ struct OLSRootView: View {
             guard !self.screenshotMode else { return }
             if phase == .active, self.auth.isSignedIn { self.model.start() } else { self.model.stop() }
         }
+        .onChange(of: self.model.activeContext?.projectId) { _, projectID in
+            guard !self.screenshotMode else { return }
+            Task { await self.loadActiveDetail(projectID) }
+        }
         .sheet(isPresented: self.$showContext) { self.contextPicker }
+        .sheet(isPresented: self.$showProfile) { self.profile }
         .fullScreenCover(isPresented: self.$showDeviceControls) {
             VStack(spacing: 0) {
                 HStack {
@@ -81,178 +149,138 @@ struct OLSRootView: View {
         .onChange(of: self.appModel.openChatRequestID) { _, _ in self.showDeviceControls = true }
     }
 
-    // MARK: - Header
+    // MARK: - Header (`.thread-header`)
 
     private var header: some View {
-        ZStack {
-            if self.surface == .chat || !(self.auth.isSignedIn || self.screenshotMode) {
-                HStack(spacing: 10) {
-                    Button(action: { self.navigate(.details) }) {
-                        HStack(spacing: 10) {
-                            Image("PearMark")
-                                .resizable().scaledToFit().frame(width: 34, height: 34)
-                                .accessibilityHidden(true)
-                            Text("pear").font(OLSTheme.wordmark).foregroundStyle(OLSTheme.ink)
-                        }
-                        .frame(minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!(self.auth.isSignedIn || self.screenshotMode))
-                    .accessibilityIdentifier("ols.header")
-                    .accessibilityLabel("pear")
-                    .accessibilityHint("Open details")
-                    if self.surface == .chat, let context = self.model.context(before: self.model.visibleMessageID) {
-                        Button { self.showContext = true } label: {
-                            Text(context.hashtag)
-                                .font(OLSTheme.chip)
-                                .foregroundStyle(OLSTheme.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .frame(minHeight: 44)
-                        }
-                        .accessibilityIdentifier("ols.context")
-                        .accessibilityLabel("Context and places in our conversation")
-                    }
-                    Spacer(minLength: 8)
+        HStack(spacing: 11) {
+            Button { self.navigate(.voice) } label: {
+                ZStack {
+                    Circle().fill(OLSTheme.presence)
+                    Circle().strokeBorder(OLSTheme.presenceMark.opacity(0.32), lineWidth: 1)
+                        .frame(width: 28, height: 28)
+                        .shadow(color: OLSTheme.presenceMark.opacity(0.22), radius: 9)
+                    Image("PearMark")
+                        .resizable().renderingMode(.template).scaledToFit()
+                        .foregroundStyle(OLSTheme.presenceMark)
+                        .frame(width: 18, height: 27)
                 }
-            } else {
-                Text("pear").font(OLSTheme.wordmark).foregroundStyle(OLSTheme.ink)
-                    .accessibilityAddTraits(.isHeader)
-                HStack {
-                    Button(action: self.goBack) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(OLSTheme.ink)
-                            .frame(width: 44, height: 44)
-                            .background(OLSTheme.soft, in: Circle())
-                    }
-                    .accessibilityIdentifier("ols.back")
-                    .accessibilityLabel(self.backLabel)
-                    Spacer()
-                }
-            }
-            HStack {
-                Spacer()
-                if self.surface != .voice, self.auth.isSignedIn || self.screenshotMode {
-                    Button { self.navigate(.voice) } label: {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(OLSTheme.ink)
-                            .frame(width: 44, height: 44)
-                            .background(OLSTheme.soft, in: Circle())
-                    }
-                    .accessibilityIdentifier("ols.voice")
-                    .accessibilityLabel("Voice")
-                }
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
-        .background(OLSTheme.header)
-        .overlay(alignment: .bottom) { OLSTheme.line.frame(height: 1) }
-        .contentShape(Rectangle())
-        // Pulling down on the header spine returns from Details or a Project; taps always work too.
-        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
-            guard self.surface == .details || self.surface == .project else { return }
-            if value.translation.height > 60, value.translation.height > abs(value.translation.width) * 1.4 {
-                self.goBack()
-            }
-        })
-    }
-
-    private var backLabel: String {
-        switch self.surface {
-        case .project: "Back to details"
-        case .voice: "Back"
-        default: "Back to conversation"
-        }
-    }
-
-    private func goBack() {
-        switch self.surface {
-        case .project: self.navigate(.details)
-        case .voice: self.navigate(self.voiceOrigin)
-        default: self.navigate(.chat)
-        }
-    }
-
-    // MARK: - Surfaces
-
-    private var content: some View {
-        GeometryReader { geometry in
-            ZStack {
-                OLSTimelineView(
-                    model: self.model,
-                    projects: self.projects,
-                    openContext: { self.showContext = true },
-                    openDetails: { self.navigate(.details) })
-                    .opacity(self.surface == .chat ? 1 : 0)
-                    .allowsHitTesting(self.surface == .chat)
-                    .accessibilityHidden(self.surface != .chat)
-                if self.surface == .details || self.surface == .project {
-                    OLSDetailsView(
-                        model: self.model,
-                        projects: self.projects,
-                        email: self.auth.displayEmail,
-                        openContext: { self.showContext = true },
-                        jumpToSegment: self.jump(toSegment:),
-                        openProject: { project in
-                            self.openedProject = project
-                            self.navigate(.project)
-                        },
-                        openDeviceControls: { self.showDeviceControls = true },
-                        signOut: { self.auth.signOutSessionOnly() },
-                        projectError: self.projectError,
-                        retryProjects: { Task { await self.begin() } })
-                        .opacity(self.surface == .details ? 1 : 0)
-                        .allowsHitTesting(self.surface == .details)
-                        .accessibilityHidden(self.surface != .details)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-                if self.surface == .project, let project = self.openedProject {
-                    OLSProjectView(
-                        project: project,
-                        model: self.model,
-                        jumpToSegment: self.jump(toSegment:),
-                        talkAbout: { project in
-                            self.model.selectProject(project.id)
-                            self.navigate(.chat)
-                        })
-                        .id(project.id)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-                if self.surface == .voice {
-                    OLSVoiceView(model: self.model, onReturn: { self.navigate(self.voiceOrigin) })
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
-        }
-    }
-
-    private var signIn: some View {
-        VStack(spacing: 22) {
-            Spacer()
-            Image("PearMark").resizable().scaledToFit().frame(width: 72, height: 72).accessibilityHidden(true)
-            Text("Here with you.").font(OLSTheme.greeting).foregroundStyle(OLSTheme.ink)
-            Text("Your conversation, and the things we’re making together.")
-                .font(OLSTheme.body).foregroundStyle(OLSTheme.secondary).multilineTextAlignment(.center)
-            Button { Task { await self.auth.signIn() } } label: {
-                Text(self.auth.isWorking ? "Connecting…" : "Continue with Google")
-                    .font(OLSTheme.action).foregroundStyle(OLSTheme.ink)
-                    .padding(.horizontal, 24).frame(minHeight: 50)
-                    .background(OLSTheme.human, in: Capsule())
+                .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .disabled(self.auth.isWorking)
-            if case let .failed(message) = self.auth.phase {
-                Text(message).font(OLSTheme.caption).foregroundStyle(OLSTheme.warning)
+            .disabled(!self.signedIn)
+            .accessibilityIdentifier("ols.voice")
+            .accessibilityLabel("Open voice")
+            VStack(alignment: .leading, spacing: 3) {
+                Text("PEAR").font(OLSTheme.wordmark).foregroundStyle(OLSTheme.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Button { self.showContext = true } label: {
+                    Text(self.subtitle)
+                        .font(OLSTheme.detail)
+                        .foregroundStyle(OLSTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .buttonStyle(.plain)
+                .disabled(!self.signedIn)
+                .accessibilityIdentifier("ols.context")
+                .accessibilityLabel("Context and places in our conversation")
             }
-            Spacer()
+            Spacer(minLength: 8)
+            Button { self.showProfile = true } label: {
+                Image(systemName: "person.circle")
+                    .font(.system(size: 21, weight: .light))
+                    .foregroundStyle(OLSTheme.secondary)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("ols.profile")
+            .accessibilityLabel("Profile")
         }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 18)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(OLSTheme.field)
+        .overlay(alignment: .bottom) { OLSTheme.hairline.frame(height: 1) }
+    }
+
+    /// `Here with you` normally, `Working with you` while a send is in flight, and the hashtag
+    /// of the moment being read when that adds information.
+    private var subtitle: String {
+        if self.model.isSending { return "Working with you" }
+        guard self.signedIn, let context = self.model.context(before: self.model.visibleMessageID),
+              context.slug?.isEmpty == false
+        else { return "Here with you" }
+        return context.hashtag
+    }
+
+    private var originLabel: String {
+        switch self.voiceOrigin {
+        case .project: self.openedProject?.name ?? "Project"
+        case .projects: "Projects"
+        default: "Thread"
+        }
+    }
+
+    // MARK: - Sign in (`.live-thread-notice`)
+
+    private var signIn: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                OLSNotice(
+                    kicker: "Private by default",
+                    title: "Sign in to continue with me.",
+                    message: "Your projects and conversations stay behind your Playground account.",
+                    action: self.auth.isWorking ? "Connecting…" : "Continue with Google")
+                {
+                    Task { await self.auth.signIn() }
+                }
+                .disabled(self.auth.isWorking)
+                if case let .failed(message) = self.auth.phase {
+                    Text(message).font(OLSTheme.caption).foregroundStyle(OLSTheme.warning)
+                }
+            }
+            .padding(EdgeInsets(top: 20, leading: 18, bottom: 40, trailing: 18))
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    // MARK: - Profile (`.profile-popover`)
+
+    private var profile: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(self.model.personName.map { "\($0.split(separator: " ").first ?? "") + PEAR" } ?? "You + PEAR")
+                            .font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
+                        Text(self.auth.displayEmail ?? "Shared context · private")
+                            .font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                    }
+                }
+                Section {
+                    Button {
+                        self.showProfile = false
+                        self.showDeviceControls = true
+                    } label: { Text("Device & connection").font(OLSTheme.label) }
+                    Button {
+                        self.auth.signOutSessionOnly()
+                        self.showProfile = false
+                    } label: { Text("Sign out").font(OLSTheme.label) }
+                        .accessibilityIdentifier("ols.sign-out")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(OLSTheme.field)
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { self.showProfile = false } label: { Text("Done").font(OLSTheme.labelStrong) }
+                }
+            }
+        }
+        .presentationDetents([.medium])
     }
 
     // MARK: - Context picker
@@ -274,7 +302,7 @@ struct OLSRootView: View {
                         Button {
                             if let id = self.model.previousAnchor() { self.jump(to: id) }
                         } label: {
-                            Label { Text("Previous").font(OLSTheme.action) } icon: { Image(systemName: "chevron.left") }
+                            Label { Text("Previous").font(OLSTheme.labelStrong) } icon: { Image(systemName: "chevron.left") }
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .disabled(self.model.previousAnchor() == nil)
@@ -283,7 +311,7 @@ struct OLSRootView: View {
                         Button {
                             if let id = self.model.nextAnchor() { self.jump(to: id) }
                         } label: {
-                            Label { Text("Next").font(OLSTheme.action) } icon: { Image(systemName: "chevron.right") }
+                            Label { Text("Next").font(OLSTheme.labelStrong) } icon: { Image(systemName: "chevron.right") }
                                 .labelStyle(.trailingIcon)
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }
@@ -335,12 +363,12 @@ struct OLSRootView: View {
                 } header: { Text("Talk about").font(OLSTheme.caption) }
             }
             .scrollContentBackground(.hidden)
-            .background(OLSTheme.background)
+            .background(OLSTheme.field)
             .navigationTitle("Our conversation")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { self.showContext = false } label: { Text("Done").font(OLSTheme.action) }
+                    Button { self.showContext = false } label: { Text("Done").font(OLSTheme.labelStrong) }
                 }
             }
         }
@@ -383,6 +411,19 @@ struct OLSRootView: View {
             guard self.auth.isSignedIn, PearSessionStore.load()?.sessionID == identity else { return }
             self.projectError = "Projects couldn’t load just now."
         }
+        await self.loadActiveDetail(self.model.activeContext?.projectId)
+    }
+
+    /// The object card's decision row needs the project's tasks; only the current project is fetched.
+    private func loadActiveDetail(_ projectID: Int?) async {
+        guard let projectID else {
+            self.activeDetail = nil
+            return
+        }
+        if self.activeDetail?.project.id == projectID { return }
+        let detail: OLSProjectDetail? = try? await OLSClient().get("/api/ols/projects/\(projectID)")
+        guard self.model.activeContext?.projectId == projectID else { return }
+        self.activeDetail = detail
     }
 }
 

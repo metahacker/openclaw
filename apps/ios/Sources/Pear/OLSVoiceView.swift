@@ -3,8 +3,12 @@ import Observation
 import Speech
 import SwiftUI
 
+/// `.voice-surface`, light cascade: return pill, `VOICE` label, the orb, a truthful state
+/// line, the spoken words, the project context row, and `Return to <origin>`.
 struct OLSVoiceView: View {
     @Bindable var model: OLSModel
+    let originLabel: String
+    let projectName: String?
     let onReturn: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(NodeAppModel.self) private var appModel
@@ -24,14 +28,49 @@ struct OLSVoiceView: View {
         self.model.latestFinalReply
     }
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Text("Same conversation.").font(OLSTheme.greeting).padding(.top, 8)
-                Text(self.model.activeContext?.hashtag ?? "Here with you")
-                    .font(OLSTheme.chip).foregroundStyle(OLSTheme.secondary)
+    /// Never a fake "listening": the label follows the capture's real state.
+    private var stateLabel: String {
+        if self.voice.isAuthorizing { return "Voice mode · waiting for permission" }
+        if self.voice.isListening { return "Voice mode · listening" }
+        if self.voice.isSpeaking { return "PEAR · reading the reply" }
+        if self.model.isSending { return "Voice mode · sending" }
+        return "Voice mode · tap the orb to speak"
+    }
 
-                VStack(spacing: 16) {
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    self.stop()
+                    self.onReturn()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.left").font(.system(size: 15, weight: .semibold))
+                        VStack(alignment: .leading, spacing: 2) {
+                            OLSKicker(text: "Return to", tracking: 1.4)
+                            Text(self.originLabel).font(OLSTheme.serif(14, weight: .medium, relativeTo: .subheadline))
+                        }
+                    }
+                    .foregroundStyle(OLSTheme.ink)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 48)
+                    .background(OLSTheme.paper.opacity(0.72), in: Capsule())
+                    .overlay { Capsule().strokeBorder(OLSTheme.spineLine) }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("ols.voice.return")
+                .accessibilityLabel("Return to \(self.originLabel)")
+                Spacer()
+                HStack(spacing: 6) {
+                    Image("PearMark").resizable().scaledToFit().frame(width: 13, height: 20).accessibilityHidden(true)
+                    OLSKicker(text: "Voice", color: OLSTheme.ink, tracking: 1.2)
+                }
+            }
+            .padding(.horizontal, 18)
+            .frame(minHeight: 82)
+
+            ScrollView {
+                VStack(spacing: 18) {
                     Button {
                         if self.voice.isListening || self.voice.isAuthorizing {
                             self.permissionTask?.cancel()
@@ -40,104 +79,142 @@ struct OLSVoiceView: View {
                             self.listen()
                         }
                     } label: {
-                        Image(systemName: self.voice.isListening ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 36, weight: .light))
-                            .foregroundStyle(OLSTheme.ink)
-                            .frame(width: 112, height: 112)
-                            .background(OLSTheme.human, in: Circle())
+                        ZStack {
+                            ForEach(0..<3, id: \.self) { ring in
+                                Circle().strokeBorder(OLSTheme.accent.opacity(0.18), lineWidth: 1)
+                                    .frame(width: 180 + CGFloat(ring) * 38, height: 180 + CGFloat(ring) * 38)
+                            }
+                            Circle()
+                                .fill(RadialGradient(
+                                    colors: [.white, Color(red: 232 / 255, green: 245 / 255, blue: 189 / 255),
+                                             Color(red: 169 / 255, green: 204 / 255, blue: 96 / 255),
+                                             Color(red: 111 / 255, green: 141 / 255, blue: 62 / 255),
+                                             Color(red: 218 / 255, green: 229 / 255, blue: 189 / 255)],
+                                    center: UnitPoint(x: 0.42, y: 0.38), startRadius: 2, endRadius: 105))
+                                .frame(width: 150, height: 150)
+                                .shadow(color: OLSTheme.accent.opacity(0.22), radius: 35)
+                            if self.voice.isListening {
+                                Image(systemName: "stop.fill").font(.system(size: 26, weight: .light)).foregroundStyle(OLSTheme.ink.opacity(0.7))
+                            }
+                        }
+                        .frame(width: 260, height: 260)
+                        .contentShape(Circle())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel(self.voice.isListening ? "Stop listening" : "Start listening")
                     .accessibilityIdentifier("ols.voice.listen")
-                    Text(self.voice.status).font(OLSTheme.label).foregroundStyle(OLSTheme.secondary)
-                }
-                .frame(maxWidth: .infinity)
-
-                if let error = self.voice.error {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(error).font(OLSTheme.body).foregroundStyle(OLSTheme.warning)
-                        if self.voice.needsSettings {
-                            Button {
-                                if let url = URL(string: UIApplication.openSettingsURLString) {
-                                    UIApplication.shared.open(url)
+                    .padding(.top, 20)
+                    OLSKicker(text: self.stateLabel, color: Color(red: 99 / 255, green: 112 / 255, blue: 93 / 255), tracking: 2.4)
+                        .multilineTextAlignment(.center)
+                    if let error = self.voice.error {
+                        VStack(spacing: 10) {
+                            Text(error).font(OLSTheme.label).foregroundStyle(OLSTheme.warning).multilineTextAlignment(.center)
+                            if self.voice.needsSettings {
+                                OLSPillAction(title: "Open Settings", filled: false) {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
                                 }
-                            } label: {
-                                Text("Open Settings").font(OLSTheme.label).frame(minHeight: 44)
                             }
                         }
+                        .padding(.horizontal, 22)
                     }
-                    .accessibilityElement(children: .contain)
-                }
-
-                OLSCard {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ZStack(alignment: .topLeading) {
-                            if self.model.draft.isEmpty {
-                                Text("Your words appear here…")
-                                    .font(OLSTheme.body)
-                                    .foregroundStyle(OLSTheme.secondary)
-                                    .allowsHitTesting(false)
-                                    .accessibilityHidden(true)
-                            }
-                            OLSTextView(
-                                text: self.$model.draft,
-                                minLines: 3,
-                                maxLines: 12,
-                                isEnabled: !self.voice.isListening,
-                                accessibilityLabel: "Your message",
-                                accessibilityIdentifier: "ols.voice.draft")
+                    ZStack(alignment: .top) {
+                        if self.model.draft.isEmpty {
+                            Text("“Your words appear here.”")
+                                .font(OLSTheme.quote)
+                                .foregroundStyle(OLSTheme.secondary)
+                                .multilineTextAlignment(.center)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
                         }
+                        OLSTextView(
+                            text: self.$model.draft,
+                            minLines: 2,
+                            maxLines: 8,
+                            isEnabled: !self.voice.isListening,
+                            accessibilityLabel: "Your message",
+                            accessibilityIdentifier: "ols.voice.draft")
+                    }
+                    .padding(.horizontal, 22)
+                    .frame(maxWidth: 330)
+                    HStack(spacing: 10) {
                         Button {
                             guard !self.screenshotMode else { return }
                             self.voice.stop()
                             self.sendTask = Task { await self.model.send() }
                         } label: {
-                            Text(self.model.isSending ? "Sending…" : "Send")
-                                .font(OLSTheme.label).padding(.horizontal, 20).frame(minHeight: 46)
-                                .background(OLSTheme.human, in: Capsule())
+                            HStack(spacing: 6) {
+                                Text(self.model.isSending ? "Working" : "Send").font(OLSTheme.labelStrong)
+                                Image(systemName: "paperplane.fill").font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundStyle(OLSTheme.sendInk)
+                            .padding(.horizontal, 16).frame(minWidth: 80, minHeight: 44)
+                            .background(OLSTheme.send, in: Capsule())
                         }
+                        .buttonStyle(.plain)
                         .disabled(self.voice.isListening || self.voice.isAuthorizing || self.model.isSending
                             || self.model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if let status = self.model.sendStatus {
-                            Text(status).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
-                        }
-                    }
-                }
-
-                if let reply = self.latestReply {
-                    OLSCard {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("Latest reply").font(OLSTheme.heading)
-                            if let context = reply.context {
-                                Text(context.hashtag).font(OLSTheme.chip).foregroundStyle(OLSTheme.secondary)
-                            }
-                            Text(Self.readingText(reply.text))
-                                .font(OLSTheme.body).textSelection(.enabled)
-                            Button {
+                        .accessibilityIdentifier("ols.voice.send")
+                        if let reply = self.latestReply {
+                            OLSPillAction(
+                                title: self.voice.isSpeaking ? "Stop reading" : "Read the last reply",
+                                filled: false,
+                                symbol: self.voice.isSpeaking ? "stop.fill" : "speaker.wave.2")
+                            {
                                 guard !self.screenshotMode else { return }
                                 if self.voice.isSpeaking {
                                     self.voice.stop()
                                 } else if self.audioIsAvailable() {
                                     self.voice.speak(Self.readingText(reply.text))
                                 }
-                            } label: {
-                                Label {
-                                    Text(self.voice.isSpeaking ? "Stop reading" : "Read this reply")
-                                        .font(OLSTheme.label)
-                                } icon: {
-                                    Image(systemName: self.voice.isSpeaking ? "stop.fill" : "speaker.wave.2")
-                                }
-                                .frame(minHeight: 44)
                             }
                             .disabled(self.voice.isListening || self.voice.isAuthorizing)
                         }
                     }
+                    if let status = self.model.sendStatus {
+                        Text(status).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 24)
             }
-            .padding(24).frame(maxWidth: 720).frame(maxWidth: .infinity)
+            .scrollDismissesKeyboard(.interactively)
+
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles").font(.system(size: 16)).foregroundStyle(OLSTheme.ink)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(self.projectName ?? "Here with you")
+                        .font(OLSTheme.serif(16, weight: .medium, relativeTo: .subheadline))
+                        .foregroundStyle(OLSTheme.ink)
+                    Text("Same project context · spoken instead of typed")
+                        .font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 15)
+            .overlay(alignment: .top) { OLSTheme.spineLine.frame(height: 1) }
+            .overlay(alignment: .bottom) { OLSTheme.spineLine.frame(height: 1) }
+            .padding(.horizontal, 18)
+            Button {
+                self.stop()
+                self.onReturn()
+            } label: {
+                Text("Return to \(self.originLabel)")
+                    .font(OLSTheme.labelStrong)
+                    .foregroundStyle(Color(red: 35 / 255, green: 48 / 255, blue: 31 / 255))
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(OLSTheme.voiceDone, in: RoundedRectangle(cornerRadius: 4))
+                    .overlay { RoundedRectangle(cornerRadius: 4).strokeBorder(OLSTheme.voiceDoneLine) }
+            }
+            .buttonStyle(.plain)
+            .padding(EdgeInsets(top: 18, leading: 18, bottom: 22, trailing: 18))
         }
-        .background(OLSTheme.background)
+        .frame(maxWidth: .infinity)
+        .background(
+            LinearGradient(
+                colors: [Color(red: 248 / 255, green: 245 / 255, blue: 237 / 255), Color(red: 232 / 255, green: 236 / 255, blue: 220 / 255)],
+                startPoint: .top, endPoint: .bottom))
         .foregroundStyle(OLSTheme.ink)
-        .scrollDismissesKeyboard(.interactively)
         .simultaneousGesture(DragGesture(minimumDistance: 35).onEnded { value in
             if value.translation.width < -90, abs(value.translation.width) > abs(value.translation.height) * 2 {
                 self.stop()

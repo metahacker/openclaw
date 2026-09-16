@@ -50,11 +50,8 @@ final class OLSModel {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var selectionRevision = 0
     @ObservationIgnored private var storageKey: String?
-    /// Injectable clock so the screenshot fixture renders a stable date kicker.
+    /// Injectable clock so day rules are stable in the screenshot fixture and tests.
     @ObservationIgnored var now: () -> Date = { Date() }
-
-    /// Scroll target for the greeting block at the top of the present.
-    static let presentID = "ols-present"
 
     private struct SavedPlace: Codable {
         var draft: String
@@ -73,19 +70,11 @@ final class OLSModel {
             if let messageID = saved.messageID, !messageID.hasPrefix("commentary:") {
                 self.jump(to: messageID)
             } else {
-                self.showPresent()
+                self.visibleMessageID = nil
+                self.isAtPresent = true
             }
-        } else {
-            self.showPresent()
         }
         self.storageKey = key
-    }
-
-    /// Mark's first viewport: the date, greeting, and today's conversation from its start.
-    func showPresent() {
-        self.visibleMessageID = nil
-        self.isAtPresent = true
-        self.scrollRequest = ScrollRequest(messageID: Self.presentID, token: UUID())
     }
 
     func jump(to messageID: String) {
@@ -401,78 +390,26 @@ final class OLSModel {
         self.dismissedContextCheck = self.contextCheck?.segmentId
     }
 
-    // MARK: - Present block
+    // MARK: - Day rules
 
-    /// ID of the first message from today; the greeting sits right above it.
-    var presentMessageID: String? {
-        let calendar = Calendar.autoupdatingCurrent
-        let today = self.now()
-        return self.messages.first(where: { message in
-            guard let date = PearAPI.parseISODate(message.createdAt) else { return false }
-            return calendar.isDate(date, inSameDayAs: today)
-        })?.id
-    }
-
-    static func greeting(hour: Int, name: String?) -> String {
-        let opening = switch hour {
-        case 5..<12: "Good morning"
-        case 12..<17: "Good afternoon"
-        default: "Good evening"
-        }
-        guard let first = name?.split(separator: " ").first.map(String.init), !first.isEmpty else {
-            return opening + "."
-        }
-        return "\(opening), \(first)."
-    }
-
-    var greeting: String {
-        Self.greeting(hour: Calendar.autoupdatingCurrent.component(.hour, from: self.now()), name: self.personName)
-    }
-
-    /// `Monday · August 17`, uppercased by the kicker style.
-    var dateKicker: String {
-        let day = self.now()
-        return day.formatted(.dateTime.weekday(.wide)) + " · " + day.formatted(.dateTime.month(.wide).day())
-    }
-
-    /// `This morning` / `Yesterday` / `August 12`: the day-part label that precedes a run of messages.
+    /// `Today` / `Yesterday` / `Sunday` / `August 12`: the prototype's day rule text.
     static func periodLabel(for date: Date, now: Date, calendar: Calendar = .autoupdatingCurrent) -> String {
-        if calendar.isDate(date, inSameDayAs: now) {
-            return switch calendar.component(.hour, from: date) {
-            case ..<12: "This morning"
-            case 12..<17: "This afternoon"
-            default: "This evening"
-            }
-        }
+        if calendar.isDate(date, inSameDayAs: now) { return "Today" }
         if calendar.isDateInYesterday(date) { return "Yesterday" }
-        if calendar.component(.year, from: date) == calendar.component(.year, from: now) {
-            return date.formatted(.dateTime.month(.wide).day())
+        let style = Date.FormatStyle(
+            locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar, timeZone: calendar.timeZone)
+        if let week = calendar.date(byAdding: .day, value: -6, to: now), date >= week, date <= now {
+            return date.formatted(style.weekday(.wide))
         }
-        return date.formatted(.dateTime.month(.wide).day().year())
+        if calendar.component(.year, from: date) == calendar.component(.year, from: now) {
+            return date.formatted(style.month(.wide).day())
+        }
+        return date.formatted(style.month(.wide).day().year())
     }
 
     func periodLabel(for message: OLSMessage) -> String? {
         guard let date = PearAPI.parseISODate(message.createdAt) else { return nil }
         return Self.periodLabel(for: date, now: self.now())
-    }
-
-    /// One calm sentence built only from real project summaries; never invented.
-    static func summaryLine(projects: [PearStatusData.Project]) -> String {
-        let recent = projects.sorted { ($0.updatedDate ?? .distantPast) > ($1.updatedDate ?? .distantPast) }
-        var sentences: [String] = []
-        for project in recent {
-            guard let summary = project.bestSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !summary.isEmpty
-            else { continue }
-            let plain = (try? AttributedString(markdown: summary)).map { String($0.characters) } ?? summary
-            let first = plain.split(whereSeparator: { $0 == "\n" }).first.map(String.init) ?? plain
-            let sentence = first.components(separatedBy: ". ").first ?? first
-            let trimmed = sentence.trimmingCharacters(in: CharacterSet(charactersIn: " ."))
-            guard !trimmed.isEmpty, trimmed.count <= 110 else { continue }
-            sentences.append(trimmed + ".")
-            if sentences.count == 2 { break }
-        }
-        return sentences.isEmpty ? "Your conversation is here when you want it." : sentences.joined(separator: " ")
     }
 
     private func merge(_ incoming: [OLSMessage]) {
