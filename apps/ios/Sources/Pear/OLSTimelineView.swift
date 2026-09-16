@@ -135,7 +135,13 @@ struct OLSTimelineView: View {
                     guard let first = ids.first(where: { $0 != "ols-bottom" }) else { return }
                     if self.model.visibleMessageID != first { self.model.visibleMessageID = first }
                 }
-                .onAppear { self.applyScrollRequest(proxy) }
+                .onAppear {
+                    // A conversation opens at the present unless a saved place asks otherwise.
+                    if self.model.scrollRequest == nil, self.model.isAtPresent, !self.model.messages.isEmpty {
+                        proxy.scrollTo("ols-bottom", anchor: .bottom)
+                    }
+                    self.applyScrollRequest(proxy)
+                }
                 .onChange(of: self.model.scrollRequest) { _, _ in self.applyScrollRequest(proxy) }
                 .onChange(of: self.model.messages.count) { _, _ in self.applyScrollRequest(proxy) }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -240,9 +246,13 @@ struct OLSTimelineView: View {
     /// `.day-rule`: hairline · SUNDAY · hairline. Anchors use the same rule with the hashtag.
     @ViewBuilder
     private func dayRule(_ text: String, message: OLSMessage, anchor: Bool) -> some View {
+        // The label keeps its full width; the hairlines take whatever is left.
         let rule = HStack(spacing: 12) {
             OLSTheme.hairline.frame(height: 1)
-            OLSKicker(text: text, color: OLSTheme.rule, tracking: 1.7).lineLimit(1)
+            OLSKicker(text: text, color: OLSTheme.rule, tracking: 1.7)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             OLSTheme.hairline.frame(height: 1)
         }
         .frame(minHeight: 44)

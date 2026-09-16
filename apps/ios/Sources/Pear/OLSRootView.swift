@@ -159,10 +159,11 @@ struct OLSRootView: View {
                     Circle().strokeBorder(OLSTheme.presenceMark.opacity(0.32), lineWidth: 1)
                         .frame(width: 28, height: 28)
                         .shadow(color: OLSTheme.presenceMark.opacity(0.22), radius: 9)
-                    Image("PearMark")
-                        .resizable().renderingMode(.template).scaledToFit()
+                    // Alpha silhouette of the mark: the lime pear on the dark disc, as in the prototype.
+                    Image("PearMarkTemplate")
+                        .resizable().scaledToFit()
                         .foregroundStyle(OLSTheme.presenceMark)
-                        .frame(width: 18, height: 27)
+                        .frame(width: 22, height: 26)
                 }
                 .frame(width: 44, height: 44)
             }
