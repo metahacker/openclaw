@@ -170,14 +170,38 @@ struct PearOLSTimelineTests {
 
     @Test func `context check appears only for a provisional latest turn and dismisses once`() async {
         let guessed = OLSContext(
-            segmentId: "g", projectId: 1, slug: "japan", label: "Japan", source: "heuristic", provisional: true)
+            segmentId: "g",
+            projectId: 1,
+            slug: "japan",
+            label: "Japan",
+            source: "heuristic",
+            provisional: true)
+        let asked = OLSMessage(
+            id: "1",
+            role: "user",
+            text: "Kyoto?",
+            createdAt: "2026-09-16T09:36:00Z",
+            context: guessed)
+        let answered = OLSMessage(
+            id: "2",
+            role: "assistant",
+            text: "Not yet.",
+            createdAt: "2026-09-16T09:38:00Z",
+            context: guessed)
+        let segment = OLSSegment(
+            id: "g",
+            projectId: 1,
+            slug: "japan",
+            label: "Japan",
+            source: "heuristic",
+            provisional: true)
         let service = StubOLSService(pages: [
-            OLSTimeline(streamId: "pair", items: [
-                OLSMessage(id: "1", role: "user", text: "Kyoto?", createdAt: "2026-09-16T09:36:00Z", context: guessed),
-                OLSMessage(id: "2", role: "assistant", text: "Not yet.", createdAt: "2026-09-16T09:38:00Z", context: guessed),
-            ], hasMore: false, activeContext: guessed, segments: [
-                OLSSegment(id: "g", projectId: 1, slug: "japan", label: "Japan", source: "heuristic", provisional: true),
-            ]),
+            OLSTimeline(
+                streamId: "pair",
+                items: [asked, answered],
+                hasMore: false,
+                activeContext: guessed,
+                segments: [segment]),
         ])
         let model = OLSModel(service: service)
         await model.refresh()
@@ -192,10 +216,13 @@ struct PearOLSTimelineTests {
         calendar.timeZone = TimeZone(identifier: "UTC")!
         calendar.locale = Locale(identifier: "en_US")
         let now = PearAPI.parseISODate("2026-09-16T09:41:00Z")!
-        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-09-16T07:38:00Z")!, now: now, calendar: calendar) == "Today")
-        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-09-15T20:00:00Z")!, now: now, calendar: calendar) == "Yesterday")
-        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-09-13T20:00:00Z")!, now: now, calendar: calendar) == "Sunday")
-        #expect(OLSModel.periodLabel(for: PearAPI.parseISODate("2026-08-12T20:00:00Z")!, now: now, calendar: calendar) == "August 12")
+        func label(_ iso: String) -> String {
+            OLSModel.periodLabel(for: PearAPI.parseISODate(iso)!, now: now, calendar: calendar)
+        }
+        #expect(label("2026-09-16T07:38:00Z") == "Today")
+        #expect(label("2026-09-15T20:00:00Z") == "Yesterday")
+        #expect(label("2026-09-13T20:00:00Z") == "Sunday")
+        #expect(label("2026-08-12T20:00:00Z") == "August 12")
     }
 }
 

@@ -258,7 +258,10 @@ struct OLSContextCheckCard: View {
     }
 
     private func option(
-        title: String, detail: String, symbol: String, identifier: String,
+        title: String,
+        detail: String,
+        symbol: String,
+        identifier: String,
         action: @escaping () -> Void) -> some View
     {
         Button(action: action) {
@@ -387,7 +390,8 @@ struct OLSFeaturedProjectCard: View {
             ZStack(alignment: .bottomLeading) {
                 LinearGradient(
                     colors: [OLSTheme.tint, OLSTheme.spine, OLSTheme.edge],
-                    startPoint: .topLeading, endPoint: .bottomTrailing)
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
                 Text(self.project.emoji ?? "🍐")
                     .font(.system(size: 110))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

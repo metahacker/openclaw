@@ -105,7 +105,8 @@ struct OLSProjectsView: View {
     }
 
     private static func isArchived(_ project: PearStatusData.Project) -> Bool {
-        [project.health, project.category, project.freshness].contains { $0?.localizedCaseInsensitiveContains("archiv") == true }
+        [project.health, project.category, project.freshness]
+            .contains { $0?.localizedCaseInsensitiveContains("archiv") == true }
     }
 
     private static func isShared(_ project: PearStatusData.Project) -> Bool {
@@ -134,6 +135,20 @@ struct OLSProjectsView: View {
 
     /// `.context-copy` ink (#53604f).
     private static let spineInk = Color(red: 83 / 255, green: 96 / 255, blue: 79 / 255)
+    /// `.workspace-nav button.active` ink (#273323).
+    private static let navInk = Color(red: 39 / 255, green: 51 / 255, blue: 35 / 255)
+
+    /// `.context-orb`: the small lime-to-green sphere on the spine.
+    private static let orbGradient = RadialGradient(
+        colors: [
+            Color(red: 251 / 255, green: 1, blue: 233 / 255),
+            Color(red: 186 / 255, green: 221 / 255, blue: 103 / 255),
+            Color(red: 118 / 255, green: 149 / 255, blue: 63 / 255),
+            Color(red: 66 / 255, green: 85 / 255, blue: 52 / 255),
+        ],
+        center: UnitPoint(x: 0.42, y: 0.4),
+        startRadius: 1,
+        endRadius: 15)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -169,10 +184,7 @@ struct OLSProjectsView: View {
         Button(action: self.onReturn) {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(RadialGradient(
-                        colors: [Color(red: 251 / 255, green: 1, blue: 233 / 255), Color(red: 186 / 255, green: 221 / 255, blue: 103 / 255),
-                                 Color(red: 118 / 255, green: 149 / 255, blue: 63 / 255), Color(red: 66 / 255, green: 85 / 255, blue: 52 / 255)],
-                        center: UnitPoint(x: 0.42, y: 0.4), startRadius: 1, endRadius: 15))
+                    .fill(Self.orbGradient)
                     .frame(width: 26, height: 26)
                     .shadow(color: OLSTheme.accent.opacity(0.16), radius: 9)
                     .accessibilityHidden(true)
@@ -219,9 +231,11 @@ struct OLSProjectsView: View {
                             .font(.system(size: 13, weight: .semibold))
                         Text(item.rawValue).font(OLSTheme.labelStrong)
                     }
-                    .foregroundStyle(self.mode == item ? Color(red: 39 / 255, green: 51 / 255, blue: 35 / 255) : OLSTheme.secondary)
+                    .foregroundStyle(self.mode == item ? Self.navInk : OLSTheme.secondary)
                     .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(self.mode == item ? OLSTheme.navActive : Color.clear, in: RoundedRectangle(cornerRadius: 7))
+                    .background(
+                        self.mode == item ? OLSTheme.navActive : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -324,11 +338,13 @@ struct OLSProjectsView: View {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("All projects").font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
-                        Text("Searchable list · newest first").font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                        Text("Searchable list · newest first").font(OLSTheme.caption)
+                            .foregroundStyle(OLSTheme.secondary)
                     }
                     Spacer()
                     Text("\(self.projects.count)").font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
-                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(OLSTheme.secondary)
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OLSTheme.secondary)
                 }
                 .padding(.vertical, 10)
                 .frame(minHeight: 78)
@@ -461,7 +477,9 @@ struct OLSProjectView: View {
                         self.files(detail)
                     }
                     if !self.segments.isEmpty { self.conversations }
-                    OLSPillAction(title: "Talk about this", symbol: "bubble.left") { self.talkAbout(self.currentProject) }
+                    OLSPillAction(title: "Talk about this", symbol: "bubble.left") {
+                        self.talkAbout(self.currentProject)
+                    }
                         .accessibilityIdentifier("ols.talk-about-project")
                     if let path = self.detail?.actions?.openProject {
                         OLSPillAction(title: "Full project on the Playground", filled: false, chevron: true) {
@@ -533,7 +551,10 @@ struct OLSProjectView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: 14) {
             ZStack(alignment: .bottomLeading) {
-                LinearGradient(colors: [OLSTheme.tint, OLSTheme.spine, OLSTheme.edge], startPoint: .topLeading, endPoint: .bottomTrailing)
+                LinearGradient(
+                    colors: [OLSTheme.tint, OLSTheme.spine, OLSTheme.edge],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing)
                 Text(self.currentProject.emoji ?? "🍐")
                     .font(.system(size: 84))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -610,10 +631,16 @@ struct OLSProjectView: View {
                 OLSCard {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(self.showAllWork ? moving : Array(moving.prefix(6))) { item in
-                            OLSCardRow(symbol: item.isBlocked ? "ellipsis" : "checkmark", text: item.title, detail: item.statusLabel)
+                            OLSCardRow(
+                                symbol: item.isBlocked ? "ellipsis" : "checkmark",
+                                text: item.title,
+                                detail: item.statusLabel)
                         }
                         if moving.count > 6 {
-                            OLSPillAction(title: self.showAllWork ? "Show less" : "Show all \(moving.count)", filled: false) {
+                            OLSPillAction(
+                                title: self.showAllWork ? "Show less" : "Show all \(moving.count)",
+                                filled: false)
+                            {
                                 self.showAllWork.toggle()
                             }
                         }
@@ -632,7 +659,11 @@ struct OLSProjectView: View {
                 OLSSectionHeading(kicker: "Files", title: "Everything we’re carrying")
                 VStack(spacing: 10) {
                     ForEach(pages) { page in
-                        self.fileRow(title: page.title, kind: "Page", symbol: "doc.text", path: page.url ?? "/p/\(page.id)")
+                        self.fileRow(
+                            title: page.title,
+                            kind: "Page",
+                            symbol: "doc.text",
+                            path: page.url ?? "/p/\(page.id)")
                     }
                     ForEach(files) { file in
                         self.fileRow(

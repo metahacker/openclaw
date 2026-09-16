@@ -247,13 +247,20 @@ struct OLSRootView: View {
 
     // MARK: - Profile (`.profile-popover`)
 
+    /// `Alex + PEAR` from the real display name, otherwise `You + PEAR`.
+    private var pairLabel: String {
+        guard let first = self.model.personName?.split(separator: " ").first, !first.isEmpty else {
+            return "You + PEAR"
+        }
+        return "\(first) + PEAR"
+    }
+
     private var profile: some View {
         NavigationStack {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(self.model.personName.map { "\($0.split(separator: " ").first ?? "") + PEAR" } ?? "You + PEAR")
-                            .font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
+                        Text(self.pairLabel).font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
                         Text(self.auth.displayEmail ?? "Shared context · private")
                             .font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
                     }
@@ -289,8 +296,12 @@ struct OLSRootView: View {
         if !self.model.segments.isEmpty { return self.model.segments }
         return self.model.contexts.reversed().map { context in
             OLSSegment(
-                id: context.segmentId, projectId: context.projectId, slug: context.slug,
-                label: context.label, source: context.source, provisional: context.provisional)
+                id: context.segmentId,
+                projectId: context.projectId,
+                slug: context.slug,
+                label: context.label,
+                source: context.source,
+                provisional: context.provisional)
         }
     }
 
@@ -302,8 +313,12 @@ struct OLSRootView: View {
                         Button {
                             if let id = self.model.previousAnchor() { self.jump(to: id) }
                         } label: {
-                            Label { Text("Previous").font(OLSTheme.labelStrong) } icon: { Image(systemName: "chevron.left") }
-                                .frame(maxWidth: .infinity, minHeight: 44)
+                            Label {
+                                Text("Previous").font(OLSTheme.labelStrong)
+                            } icon: {
+                                Image(systemName: "chevron.left")
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .disabled(self.model.previousAnchor() == nil)
                         .accessibilityIdentifier("ols.anchor.previous")
@@ -311,9 +326,13 @@ struct OLSRootView: View {
                         Button {
                             if let id = self.model.nextAnchor() { self.jump(to: id) }
                         } label: {
-                            Label { Text("Next").font(OLSTheme.labelStrong) } icon: { Image(systemName: "chevron.right") }
-                                .labelStyle(.trailingIcon)
-                                .frame(maxWidth: .infinity, minHeight: 44)
+                            Label {
+                                Text("Next").font(OLSTheme.labelStrong)
+                            } icon: {
+                                Image(systemName: "chevron.right")
+                            }
+                            .labelStyle(.trailingIcon)
+                            .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .disabled(self.model.nextAnchor() == nil)
                         .accessibilityIdentifier("ols.anchor.next")
@@ -331,7 +350,8 @@ struct OLSRootView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(segment.context.displayName).font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
                                 HStack {
-                                    Text(segment.context.hashtag).font(OLSTheme.chip).foregroundStyle(OLSTheme.secondary)
+                                    Text(segment.context.hashtag).font(OLSTheme.chip)
+                                        .foregroundStyle(OLSTheme.secondary)
                                     if let raw = segment.createdAt, let date = PearAPI.parseISODate(raw) {
                                         Text(OLSModel.periodLabel(for: date, now: self.model.now()))
                                             .font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)

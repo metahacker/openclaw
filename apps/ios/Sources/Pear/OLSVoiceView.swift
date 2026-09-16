@@ -28,6 +28,31 @@ struct OLSVoiceView: View {
         self.model.latestFinalReply
     }
 
+    /// `.voice-center small` ink (#63705d).
+    private static let stateInk = Color(red: 99 / 255, green: 112 / 255, blue: 93 / 255)
+
+    /// `.voice-orb`, light cascade.
+    private static let orbGradient = RadialGradient(
+        colors: [
+            .white,
+            Color(red: 232 / 255, green: 245 / 255, blue: 189 / 255),
+            Color(red: 169 / 255, green: 204 / 255, blue: 96 / 255),
+            Color(red: 111 / 255, green: 141 / 255, blue: 62 / 255),
+            Color(red: 218 / 255, green: 229 / 255, blue: 189 / 255),
+        ],
+        center: UnitPoint(x: 0.42, y: 0.38),
+        startRadius: 2,
+        endRadius: 105)
+
+    /// `.voice-surface` field: #f8f5ed down to #e8ecdc.
+    private static let fieldGradient = LinearGradient(
+        colors: [
+            Color(red: 248 / 255, green: 245 / 255, blue: 237 / 255),
+            Color(red: 232 / 255, green: 236 / 255, blue: 220 / 255),
+        ],
+        startPoint: .top,
+        endPoint: .bottom)
+
     /// Never a fake "listening": the label follows the capture's real state.
     private var stateLabel: String {
         if self.voice.isAuthorizing { return "Voice mode · waiting for permission" }
@@ -85,16 +110,12 @@ struct OLSVoiceView: View {
                                     .frame(width: 180 + CGFloat(ring) * 38, height: 180 + CGFloat(ring) * 38)
                             }
                             Circle()
-                                .fill(RadialGradient(
-                                    colors: [.white, Color(red: 232 / 255, green: 245 / 255, blue: 189 / 255),
-                                             Color(red: 169 / 255, green: 204 / 255, blue: 96 / 255),
-                                             Color(red: 111 / 255, green: 141 / 255, blue: 62 / 255),
-                                             Color(red: 218 / 255, green: 229 / 255, blue: 189 / 255)],
-                                    center: UnitPoint(x: 0.42, y: 0.38), startRadius: 2, endRadius: 105))
+                                .fill(Self.orbGradient)
                                 .frame(width: 150, height: 150)
                                 .shadow(color: OLSTheme.accent.opacity(0.22), radius: 35)
                             if self.voice.isListening {
-                                Image(systemName: "stop.fill").font(.system(size: 26, weight: .light)).foregroundStyle(OLSTheme.ink.opacity(0.7))
+                                Image(systemName: "stop.fill").font(.system(size: 26, weight: .light))
+                                    .foregroundStyle(OLSTheme.ink.opacity(0.7))
                             }
                         }
                         .frame(width: 260, height: 260)
@@ -104,14 +125,17 @@ struct OLSVoiceView: View {
                     .accessibilityLabel(self.voice.isListening ? "Stop listening" : "Start listening")
                     .accessibilityIdentifier("ols.voice.listen")
                     .padding(.top, 20)
-                    OLSKicker(text: self.stateLabel, color: Color(red: 99 / 255, green: 112 / 255, blue: 93 / 255), tracking: 2.4)
+                    OLSKicker(text: self.stateLabel, color: Self.stateInk, tracking: 2.4)
                         .multilineTextAlignment(.center)
                     if let error = self.voice.error {
                         VStack(spacing: 10) {
-                            Text(error).font(OLSTheme.label).foregroundStyle(OLSTheme.warning).multilineTextAlignment(.center)
+                            Text(error).font(OLSTheme.label).foregroundStyle(OLSTheme.warning)
+                                .multilineTextAlignment(.center)
                             if self.voice.needsSettings {
                                 OLSPillAction(title: "Open Settings", filled: false) {
-                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                                        UIApplication.shared.open(url)
+                                    }
                                 }
                             }
                         }
@@ -210,10 +234,7 @@ struct OLSVoiceView: View {
             .padding(EdgeInsets(top: 18, leading: 18, bottom: 22, trailing: 18))
         }
         .frame(maxWidth: .infinity)
-        .background(
-            LinearGradient(
-                colors: [Color(red: 248 / 255, green: 245 / 255, blue: 237 / 255), Color(red: 232 / 255, green: 236 / 255, blue: 220 / 255)],
-                startPoint: .top, endPoint: .bottom))
+        .background(Self.fieldGradient)
         .foregroundStyle(OLSTheme.ink)
         .simultaneousGesture(DragGesture(minimumDistance: 35).onEnded { value in
             if value.translation.width < -90, abs(value.translation.width) > abs(value.translation.height) * 2 {
@@ -349,7 +370,8 @@ private final class OLSVoiceCapture: NSObject, AVSpeechSynthesizerDelegate {
             try self.engine.start()
             self.isListening = true
             self.recognition = recognizer.recognitionTask(
-                with: request, resultHandler: self.resultHandler(generation: generation, prefix: prefix))
+                with: request,
+                resultHandler: self.resultHandler(generation: generation, prefix: prefix))
         } catch {
             self.stop()
             self.error = "I couldn’t start the microphone. Your message is still here; try again or type it."
@@ -415,7 +437,8 @@ private final class OLSVoiceCapture: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private nonisolated func resultHandler(
-        generation: Int, prefix: String) -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void
+        generation: Int,
+        prefix: String) -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void
     {
         { [weak self] result, error in
             let text = result?.bestTranscription.formattedString

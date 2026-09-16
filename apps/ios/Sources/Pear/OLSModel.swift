@@ -397,7 +397,9 @@ final class OLSModel {
         if calendar.isDate(date, inSameDayAs: now) { return "Today" }
         if calendar.isDateInYesterday(date) { return "Yesterday" }
         let style = Date.FormatStyle(
-            locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar, timeZone: calendar.timeZone)
+            locale: calendar.locale ?? .autoupdatingCurrent,
+            calendar: calendar,
+            timeZone: calendar.timeZone)
         if let week = calendar.date(byAdding: .day, value: -6, to: now), date >= week, date <= now {
             return date.formatted(style.weekday(.wide))
         }
@@ -433,14 +435,29 @@ final class OLSModel {
     /// Synthetic projects for the CI proof images only; never shown above a real account.
     static let screenshotProjects: [PearStatusData.Project] = [
         PearStatusData.Project(
-            id: 1, slug: "japan-family-trip", name: "Japan family trip", emoji: "🗾", category: "Travel",
-            updatedAt: "2026-09-16T09:40:00Z", summary: "Tokyo is reconciled; one Kyoto dinner remains open."),
+            id: 1,
+            slug: "japan-family-trip",
+            name: "Japan family trip",
+            emoji: "🗾",
+            category: "Travel",
+            updatedAt: "2026-09-16T09:40:00Z",
+            summary: "Tokyo is reconciled; one Kyoto dinner remains open."),
         PearStatusData.Project(
-            id: 2, slug: "pear-mvp", name: "PEAR MVP", emoji: "🍐", category: "Product",
-            updatedAt: "2026-09-16T09:29:00Z", summary: "Mark is tightening five complete long-form screens."),
+            id: 2,
+            slug: "pear-mvp",
+            name: "PEAR MVP",
+            emoji: "🍐",
+            category: "Product",
+            updatedAt: "2026-09-16T09:29:00Z",
+            summary: "Mark is tightening five complete long-form screens."),
         PearStatusData.Project(
-            id: 3, slug: "new-york-arrangements", name: "New York arrangements", emoji: "🗽", category: "Family",
-            updatedAt: "2026-09-15T18:00:00Z", summary: "Travel and family coordination are current."),
+            id: 3,
+            slug: "new-york-arrangements",
+            name: "New York arrangements",
+            emoji: "🗽",
+            category: "Family",
+            updatedAt: "2026-09-15T18:00:00Z",
+            summary: "Travel and family coordination are current."),
     ]
 
     /// A → B → A: two Japan segments around one PEAR MVP segment, one attachment card, one
@@ -449,14 +466,26 @@ final class OLSModel {
         self.now = { PearAPI.parseISODate("2026-09-16T09:41:00Z") ?? Date() }
         self.personName = "Alex"
         let japan = OLSContext(
-            segmentId: "sample-japan-1", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
-            source: "named", provisional: false)
+            segmentId: "sample-japan-1",
+            projectId: 1,
+            slug: "japan-family-trip",
+            label: "Japan family trip",
+            source: "named",
+            provisional: false)
         let mvp = OLSContext(
-            segmentId: "sample-mvp", projectId: 2, slug: "pear-mvp", label: "PEAR MVP", source: "named",
+            segmentId: "sample-mvp",
+            projectId: 2,
+            slug: "pear-mvp",
+            label: "PEAR MVP",
+            source: "named",
             provisional: false)
         let japanAgain = OLSContext(
-            segmentId: "sample-japan-2", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
-            source: "heuristic", provisional: true)
+            segmentId: "sample-japan-2",
+            projectId: 1,
+            slug: "japan-family-trip",
+            label: "Japan family trip",
+            source: "heuristic",
+            provisional: true)
         self.messages = [
             OLSMessage(
                 id: "1",
@@ -510,14 +539,29 @@ final class OLSModel {
         ]
         self.segments = [
             OLSSegment(
-                id: "sample-japan-2", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
-                source: "heuristic", provisional: true, createdAt: "2026-09-16T09:36:00Z"),
+                id: "sample-japan-2",
+                projectId: 1,
+                slug: "japan-family-trip",
+                label: "Japan family trip",
+                source: "heuristic",
+                provisional: true,
+                createdAt: "2026-09-16T09:36:00Z"),
             OLSSegment(
-                id: "sample-mvp", projectId: 2, slug: "pear-mvp", label: "PEAR MVP", source: "named",
-                provisional: false, createdAt: "2026-09-16T09:27:00Z"),
+                id: "sample-mvp",
+                projectId: 2,
+                slug: "pear-mvp",
+                label: "PEAR MVP",
+                source: "named",
+                provisional: false,
+                createdAt: "2026-09-16T09:27:00Z"),
             OLSSegment(
-                id: "sample-japan-1", projectId: 1, slug: "japan-family-trip", label: "Japan family trip",
-                source: "named", provisional: false, createdAt: "2026-09-16T07:38:00Z"),
+                id: "sample-japan-1",
+                projectId: 1,
+                slug: "japan-family-trip",
+                label: "Japan family trip",
+                source: "named",
+                provisional: false,
+                createdAt: "2026-09-16T07:38:00Z"),
         ]
         self.activeContext = japanAgain
     }

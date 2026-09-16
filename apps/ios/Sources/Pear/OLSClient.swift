@@ -83,8 +83,12 @@ struct OLSSegment: Codable, Equatable, Identifiable, Sendable {
 
     var context: OLSContext {
         OLSContext(
-            segmentId: self.id, projectId: self.projectId, slug: self.slug, label: self.label,
-            source: self.source, provisional: self.provisional)
+            segmentId: self.id,
+            projectId: self.projectId,
+            slug: self.slug,
+            label: self.label,
+            source: self.source,
+            provisional: self.provisional)
     }
 }
 

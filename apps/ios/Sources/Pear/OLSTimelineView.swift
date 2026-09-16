@@ -89,7 +89,9 @@ struct OLSTimelineView: View {
                             Button {
                                 Task { await self.model.loadEarlier() }
                             } label: {
-                                OLSKicker(text: self.model.isPaging ? "Loading…" : "Earlier in our conversation", color: OLSTheme.rule)
+                                OLSKicker(
+                                    text: self.model.isPaging ? "Loading…" : "Earlier in our conversation",
+                                    color: OLSTheme.rule)
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .disabled(self.model.isPaging)
@@ -98,7 +100,9 @@ struct OLSTimelineView: View {
                         if self.model.messages.isEmpty { self.emptyState }
                         ForEach(self.entries) { entry in
                             VStack(alignment: .leading, spacing: 0) {
-                                if let rule = entry.rule { self.dayRule(rule, message: entry.message, anchor: entry.anchor) }
+                                if let rule = entry.rule {
+                                    self.dayRule(rule, message: entry.message, anchor: entry.anchor)
+                                }
                                 if entry.message.isCommentary {
                                     self.commentary(entry.message)
                                 } else {
@@ -155,8 +159,12 @@ struct OLSTimelineView: View {
                                 proxy.scrollTo("ols-bottom", anchor: .bottom)
                             }
                         } label: {
-                            Label { Text("Present").font(OLSTheme.labelStrong) } icon: { Image(systemName: "arrow.down") }
-                                .foregroundStyle(OLSTheme.ink)
+                            Label {
+                                Text("Present").font(OLSTheme.labelStrong)
+                            } icon: {
+                                Image(systemName: "arrow.down")
+                            }
+                            .foregroundStyle(OLSTheme.ink)
                                 .padding(.horizontal, 14).padding(.vertical, 10)
                                 .background(OLSTheme.paper, in: Capsule())
                                 .overlay { Capsule().strokeBorder(OLSTheme.hairline) }
