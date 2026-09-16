@@ -234,6 +234,7 @@ struct PearChatSendResponse: Codable {
 
 struct PearMe: Codable {
     var email: String?
+    var name: String?
     var role: String?
     var actorEmail: String?
 }

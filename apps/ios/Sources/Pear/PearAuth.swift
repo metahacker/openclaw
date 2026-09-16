@@ -8,6 +8,8 @@ import UIKit
 struct PearSession: Codable, Equatable {
     var sessionID: String
     var email: String?
+    /// Display name from the Playground allow list; only used for the greeting.
+    var name: String?
     var expiresAt: Date?
     var createdAt: Date
 
@@ -55,9 +57,10 @@ enum PearSessionStore {
     }
 
     @discardableResult
-    static func updateEmail(_ email: String?) -> Bool {
+    static func updateEmail(_ email: String?, name: String? = nil) -> Bool {
         guard var session = self.load() else { return false }
         session.email = email
+        if let name { session.name = name }
         return self.save(session)
     }
 
@@ -103,6 +106,7 @@ enum PearSessionExchange {
         let updated = PearSession(
             sessionID: session.sessionID,
             email: email,
+            name: me.name,
             expiresAt: session.expiresAt,
             createdAt: session.createdAt)
         guard PearSessionStore.save(updated) else { throw PearAuthError.keychainWriteFailed }
@@ -227,7 +231,7 @@ final class PearAuthModel {
         do {
             let me = try await PearAPI(sessionID: session.sessionID).me()
             guard let email = me.email, !email.isEmpty else { throw PearAPIError.notAuthorized }
-            _ = PearSessionStore.updateEmail(email)
+            _ = PearSessionStore.updateEmail(email, name: me.name)
         } catch PearAPIError.notAuthorized {
             PearSessionStore.clear()
             self.phase = .signedOut

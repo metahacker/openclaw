@@ -76,160 +76,264 @@ struct OLSProjectDetail: Decodable {
     }
 }
 
-struct OLSProjectsView: View {
+/// Mark's Details surface: the conversation stays primary; Continue, Conversations, and
+/// Projects sit underneath. Cards without real data are omitted rather than faked.
+struct OLSDetailsView: View {
+    @Bindable var model: OLSModel
     let projects: [PearStatusData.Project]
-    let selectedProject: PearStatusData.Project?
-    let onSelect: (PearStatusData.Project) -> Void
-    let onReturn: () -> Void
+    let email: String?
+    let openContext: () -> Void
+    let jumpToSegment: (String) -> Void
+    let openProject: (PearStatusData.Project) -> Void
+    let openDeviceControls: () -> Void
+    let signOut: () -> Void
+    let projectError: String?
+    let retryProjects: () -> Void
 
     @State private var query = ""
-    @State private var recentOnly = true
-    @State private var inspecting: PearStatusData.Project?
+    @State private var allConversations = false
+    @State private var allProjects = false
 
-    private var visibleProjects: [PearStatusData.Project] {
-        let sorted = self.projects.sorted {
+    private var sortedProjects: [PearStatusData.Project] {
+        self.projects.sorted {
             let left = $0.updatedDate ?? .distantPast
             let right = $1.updatedDate ?? .distantPast
             return left == right ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : left > right
         }
-        let search = self.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !search.isEmpty {
-            return sorted.filter {
-                $0.name.localizedStandardContains(search) || $0.hashtag.localizedStandardContains(search)
-                    || ($0.bestSummary?.localizedStandardContains(search) ?? false)
-            }
+    }
+
+    private struct ContinueEntry: Identifiable {
+        var segment: OLSSegment
+        var project: PearStatusData.Project
+        var id: String {
+            self.segment.id
         }
-        return self.recentOnly ? Array(sorted.prefix(12)) : sorted
+    }
+
+    /// Newest segment per project, newest first: the short ranked return path.
+    private var continueSegments: [ContinueEntry] {
+        var seen = Set<Int>()
+        let entries = self.model.segments.compactMap { segment -> ContinueEntry? in
+            guard let projectID = segment.projectId, seen.insert(projectID).inserted,
+                  let project = self.projects.first(where: { $0.id == projectID })
+            else { return nil }
+            return ContinueEntry(segment: segment, project: project)
+        }
+        return Array(entries.prefix(3))
+    }
+
+    private struct ConversationEntry: Identifiable {
+        var segment: OLSSegment
+        var project: PearStatusData.Project?
+        var title: String
+        var detail: String?
+        var id: String {
+            self.segment.id
+        }
+    }
+
+    private var conversations: [ConversationEntry] {
+        let search = self.query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entries = self.model.segments.map { segment -> ConversationEntry in
+            let rows = self.model.messages.filter { $0.context?.segmentId == segment.id && !$0.isCommentary }
+            let opening = rows.first(where: { !$0.isAssistant })?.text ?? rows.first?.text
+            let reply = rows.last(where: { $0.isAssistant })?.text
+            return ConversationEntry(
+                segment: segment,
+                project: self.projects.first(where: { $0.id == segment.projectId }),
+                title: opening.map(OLSProjectTile.plain) ?? segment.context.displayName,
+                detail: reply.map(OLSProjectTile.plain))
+        }
+        guard !search.isEmpty else { return entries }
+        return entries.filter {
+            $0.title.localizedStandardContains(search) || ($0.detail?.localizedStandardContains(search) ?? false)
+                || $0.segment.context.displayName.localizedStandardContains(search)
+                || $0.segment.context.hashtag.localizedStandardContains(search)
+        }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button {
-                    if self.inspecting != nil { self.inspecting = nil } else { self.onReturn() }
-                } label: {
-                    Label {
-                        Text(self.inspecting == nil ? "Chat" : "Projects").font(OLSTheme.label)
-                    } icon: {
-                        Image(systemName: "chevron.left")
-                    }
-                    .frame(minHeight: 44)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                OLSComposer(model: self.model, projects: self.projects, openContext: self.openContext)
+                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 14) {
+                    OLSKicker(text: "Details").padding(.top, 8)
+                    Text("Everything is here when you want it.")
+                        .font(OLSTheme.greeting)
+                        .foregroundStyle(OLSTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Your conversations stay primary. I keep the work organized underneath.")
+                        .font(OLSTheme.body)
+                        .foregroundStyle(OLSTheme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .accessibilityIdentifier("ols.projects.return")
-                Spacer()
-                if self.inspecting != nil {
-                    Button(action: self.onReturn) {
-                        Label {
-                            Text("Chat").font(OLSTheme.label)
-                        } icon: {
-                            Image(systemName: "bubble.left")
-                        }
-                        .frame(minHeight: 44)
+                if let projectError {
+                    HStack(spacing: 12) {
+                        Text(projectError).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                        Button(action: self.retryProjects) { Text("Retry").font(OLSTheme.action) }
                     }
                 }
+                if !self.continueSegments.isEmpty { self.continueCard }
+                if !self.model.segments.isEmpty { self.conversationsCard }
+                if !self.projects.isEmpty { self.projectsCard }
+                self.accountCard
             }
+            .frame(maxWidth: 700)
             .padding(.horizontal, 20)
-            .foregroundStyle(OLSTheme.ink)
-            .contentShape(Rectangle())
-            .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { value in
-                // Only the header owns room navigation; scrolling project text
-                // and files must never pull the conversation into view.
-                if value.translation.height > 60,
-                   value.translation.height > abs(value.translation.width) * 1.4
-                {
-                    self.onReturn()
-                }
-            })
-
-            if let project = self.inspecting {
-                OLSProjectDetailView(project: project, onSelect: self.onSelect)
-                    .id(project.id)
-            } else {
-                self.projectList
-            }
+            .padding(.bottom, 32)
+            .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(OLSTheme.background)
+        .accessibilityIdentifier("ols.details.surface")
     }
 
-    private var projectList: some View {
-        ScrollView {
+    private var continueCard: some View {
+        OLSCard {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Projects")
-                    .font(OLSTheme.title)
-                    .foregroundStyle(OLSTheme.ink)
-                    .accessibilityAddTraits(.isHeader)
+                OLSSectionHeading(kicker: "Continue", title: "Pick up where we left off")
+                ForEach(self.continueSegments) { item in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 14) {
+                            OLSEmojiTile(emoji: item.project.emoji, size: 52)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    OLSKicker(text: item.project.category ?? "Project").lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    if let raw = item.segment.createdAt, let date = PearAPI.parseISODate(raw) {
+                                        Text(date, style: .relative).font(OLSTheme.caption)
+                                            .foregroundStyle(OLSTheme.secondary)
+                                    }
+                                }
+                                Text(item.project.name)
+                                    .font(OLSTheme.cardTitle)
+                                    .foregroundStyle(OLSTheme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let summary = item.project.bestSummary, !summary.isEmpty {
+                                    Text(OLSProjectTile.plain(summary))
+                                        .font(OLSTheme.caption)
+                                        .foregroundStyle(OLSTheme.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
+                        OLSPillAction(title: "Return to this conversation") { self.jumpToSegment(item.segment.id) }
+                            .accessibilityIdentifier("ols.continue.\(item.segment.id)")
+                    }
+                    .padding(14)
+                    .background(OLSTheme.paper, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(OLSTheme.cardLine) }
+                }
+            }
+        }
+    }
+
+    private var conversationsCard: some View {
+        OLSCard {
+            VStack(alignment: .leading, spacing: 16) {
+                OLSSectionHeading(kicker: "Conversations", title: "Every place we can return to")
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(OLSTheme.secondary)
                     TextField(text: self.$query) {
-                        Text("Find a project").font(OLSTheme.body).foregroundStyle(OLSTheme.secondary)
+                        Text("Search what we talked about").font(OLSTheme.label).foregroundStyle(OLSTheme.secondary)
                     }
-                    .font(OLSTheme.body)
+                    .font(OLSTheme.label)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .accessibilityLabel("Find a project")
+                    .accessibilityLabel("Search conversations")
+                    .accessibilityIdentifier("ols.details.search")
                     if !self.query.isEmpty {
-                        Button {
-                            self.query = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44)
+                        Button { self.query = "" } label: {
+                            Image(systemName: "xmark.circle.fill").frame(width: 32, height: 32)
                         }
+                        .foregroundStyle(OLSTheme.secondary)
                         .accessibilityLabel("Clear search")
                     }
                 }
                 .padding(.horizontal, 14)
-                .frame(minHeight: 52)
-                .background(OLSTheme.paper, in: RoundedRectangle(cornerRadius: 16))
-                .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(OLSTheme.line) }
-
-                if self.query.isEmpty, self.projects.count > 12 {
-                    Picker(selection: self.$recentOnly) {
-                        Text("Recent").font(OLSTheme.label).tag(true)
-                        Text("All").font(OLSTheme.label).tag(false)
-                    } label: {
-                        Text("Projects").font(OLSTheme.label)
+                .frame(minHeight: 46)
+                .background(OLSTheme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(OLSTheme.cardLine) }
+                let rows = self.conversations
+                if rows.isEmpty {
+                    Text("Nothing matches yet.").font(OLSTheme.label).foregroundStyle(OLSTheme.secondary)
+                }
+                ForEach(self.allConversations || !self.query.isEmpty ? rows : Array(rows.prefix(5))) { entry in
+                    OLSConversationRow(
+                        emoji: entry.project?.emoji,
+                        eyebrow: entry.segment.context.displayName,
+                        title: entry.title,
+                        detail: entry.detail,
+                        trailing: entry.segment.createdAt.flatMap(PearAPI.parseISODate)
+                            .map { OLSModel.periodLabel(for: $0, now: self.model.now()) })
+                    {
+                        self.jumpToSegment(entry.segment.id)
                     }
-                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("ols.conversation.\(entry.segment.id)")
                 }
-
-                if self.visibleProjects.isEmpty {
-                    OLSEmptyState(
-                        title: self.query.isEmpty ? "Room for what matters." : "No matching projects.",
-                        message: self.query.isEmpty
-                            ? "Your shared work will appear here as we get things moving."
-                            : "Try another name or return to our conversation.",
-                        symbol: "square.stack")
-                }
-                ForEach(self.visibleProjects) { project in
-                    OLSProjectCard(project: project, isCurrent: project.id == self.selectedProject?.id) {
-                        self.inspecting = project
+                if self.query.isEmpty, rows.count > 5 {
+                    OLSPillAction(
+                        title: self.allConversations ? "Fewer conversations" : "All \(rows.count) conversations",
+                        filled: false)
+                    {
+                        self.allConversations.toggle()
                     }
                 }
             }
-            .frame(maxWidth: 720)
-            .padding(20)
-            .frame(maxWidth: .infinity)
         }
-        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private var projectsCard: some View {
+        OLSCard {
+            VStack(alignment: .leading, spacing: 16) {
+                OLSSectionHeading(kicker: "Projects", title: "The work your conversations created")
+                let shown = self.allProjects ? self.sortedProjects : Array(self.sortedProjects.prefix(6))
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(shown) { project in
+                        OLSProjectTile(project: project) { self.openProject(project) }
+                            .accessibilityIdentifier("ols.project.\(project.id)")
+                    }
+                }
+                if self.sortedProjects.count > 6 {
+                    OLSPillAction(
+                        title: self.allProjects ? "Fewer projects" : "All \(self.sortedProjects.count) projects",
+                        filled: false)
+                    {
+                        self.allProjects.toggle()
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("ols.projects")
+    }
+
+    private var accountCard: some View {
+        OLSCard {
+            VStack(alignment: .leading, spacing: 14) {
+                OLSSectionHeading(kicker: "Account", title: self.email ?? "Signed in")
+                OLSPillAction(title: "Device & connection", filled: false, action: self.openDeviceControls)
+                OLSPillAction(title: "Sign out", filled: false, chevron: false, action: self.signOut)
+                    .accessibilityIdentifier("ols.sign-out")
+            }
+        }
     }
 }
 
-private struct OLSArtifactSelection: Identifiable {
-    var url: URL
-    var title: String
-    var id: String {
-        self.url.absoluteString
-    }
-}
-
-private struct OLSProjectDetailView: View {
+/// Mark's Project screen: hero, eyebrow chips, serif title, RIGHT NOW, NEEDS YOU, FILES,
+/// and the conversations that created it. Every section renders only from real data.
+struct OLSProjectView: View {
     let project: PearStatusData.Project
-    let onSelect: (PearStatusData.Project) -> Void
+    @Bindable var model: OLSModel
+    let jumpToSegment: (String) -> Void
+    let talkAbout: (PearStatusData.Project) -> Void
 
     @State private var detail: OLSProjectDetail?
     @State private var isLoading = false
     @State private var error: String?
     @State private var showAllWork = false
-    @State private var artifact: OLSArtifactSelection?
+    @State private var artifact: OLSArtifact?
 
     private var currentProject: PearStatusData.Project {
         self.detail?.project ?? self.project
@@ -239,149 +343,132 @@ private struct OLSProjectDetailView: View {
         (self.detail?.tasks ?? []).filter { !$0.isComplete }
     }
 
+    private var segments: [OLSSegment] {
+        self.model.segments.filter { $0.projectId == self.project.id }
+    }
+
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                self.identity
+            VStack(alignment: .leading, spacing: 26) {
+                self.hero
                 if self.isLoading, self.detail == nil {
                     HStack(spacing: 12) {
                         ProgressView().tint(OLSTheme.accent)
                         Text("Bringing this up to date…").font(OLSTheme.label).foregroundStyle(OLSTheme.secondary)
                     }
-                    .padding(.vertical, 24)
                 }
                 if let error = self.error {
                     OLSCard {
                         VStack(alignment: .leading, spacing: 12) {
                             Text(error).font(OLSTheme.body).foregroundStyle(OLSTheme.secondary)
-                            Button {
+                            OLSPillAction(title: "Try again", filled: false, chevron: false) {
                                 Task { await self.load() }
-                            } label: {
-                                Text("Try again").font(OLSTheme.label).frame(minHeight: 44)
                             }
-                            .foregroundStyle(OLSTheme.accent)
                         }
                     }
                 }
                 if let detail = self.detail {
-                    self.currentState(detail)
-                    self.work(detail)
-                    self.materials(detail)
-                    if let path = detail.actions?.openProject {
-                        Button {
-                            self.open(path, title: self.currentProject.name)
-                        } label: {
-                            HStack {
-                                Text("Full project").font(OLSTheme.label)
-                                Spacer()
-                                Image(systemName: "arrow.up.right")
-                            }
-                            .frame(minHeight: 44)
-                        }
-                        .foregroundStyle(OLSTheme.accent)
+                    self.rightNow(detail)
+                    self.needsYou(detail)
+                    self.inTheWorks(detail)
+                    self.files(detail)
+                }
+                if !self.segments.isEmpty { self.conversations }
+                OLSPillAction(title: "Talk about this", chevron: false) { self.talkAbout(self.currentProject) }
+                    .accessibilityIdentifier("ols.talk-about-project")
+                if let path = self.detail?.actions?.openProject {
+                    OLSPillAction(title: "Full project on the Playground", filled: false) {
+                        self.open(path, title: self.currentProject.name)
                     }
                 }
             }
-            .frame(maxWidth: 720)
-            .padding(20)
+            .frame(maxWidth: 700)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 32)
             .frame(maxWidth: .infinity)
         }
+        .background(OLSTheme.background)
         .task { await self.load() }
         .refreshable { await self.load() }
         .fullScreenCover(item: self.$artifact) { item in
             OLSArtifactView(url: item.url, title: item.title) { self.artifact = nil }
         }
+        .accessibilityIdentifier("ols.project.surface")
     }
 
-    private var identity: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(self.currentProject.emoji ?? "🍐")
-                .font(OLSTheme.title)
-                .frame(width: 64, height: 64)
-                .background(OLSTheme.soft, in: RoundedRectangle(cornerRadius: 18))
-                .accessibilityHidden(true)
+    /// Category and health chips, deduplicated so identical strings never collide as row IDs.
+    private var heroChips: [String] {
+        var chips: [String] = []
+        for chip in [self.currentProject.category, self.currentProject.health].compactMap({ $0 })
+            where !chip.isEmpty && !chips.contains(chip)
+        {
+            chips.append(chip)
+        }
+        return chips
+    }
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ZStack(alignment: .bottomLeading) {
+                RoundedRectangle(cornerRadius: 26, style: .continuous).fill(OLSTheme.human)
+                Text(self.currentProject.emoji ?? "🍐")
+                    .font(.system(size: 84))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityHidden(true)
+                HStack(spacing: 8) {
+                    ForEach(self.heroChips, id: \.self) { chip in
+                        OLSKicker(text: chip, color: OLSTheme.ink)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(OLSTheme.paper.opacity(0.85), in: Capsule())
+                    }
+                }
+                .padding(16)
+            }
+            .frame(height: 200)
+            .padding(.top, 4)
             Text(self.currentProject.name)
-                .font(OLSTheme.title)
+                .font(OLSTheme.greeting)
                 .foregroundStyle(OLSTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
             Text(self.currentProject.hashtag).font(OLSTheme.chip).foregroundStyle(OLSTheme.secondary)
-            Button {
-                self.onSelect(self.currentProject)
-            } label: {
-                Label {
-                    Text("Talk about this").font(OLSTheme.label)
-                } icon: {
-                    Image(systemName: "bubble.left")
-                }
-                .padding(.horizontal, 16)
-                .frame(minHeight: 46)
-                .background(OLSTheme.soft, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(OLSTheme.ink)
-            .accessibilityHint("Return to our conversation with this project selected")
         }
     }
 
     @ViewBuilder
-    private func currentState(_ detail: OLSProjectDetail) -> some View {
+    private func rightNow(_ detail: OLSProjectDetail) -> some View {
         let summary = detail.brief?.summary ?? detail.project.bestSummary
         if let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            OLSCard {
-                VStack(alignment: .leading, spacing: 14) {
-                    OLSSectionHeading(title: detail.brief?.stale == true ? "Last update" : "Right now")
-                    Text(self.markdown(summary))
-                        .font(OLSTheme.body)
-                        .foregroundStyle(OLSTheme.ink)
-                        .tint(OLSTheme.accent)
-                        .textSelection(.enabled)
-                    if let raw = detail.brief?.updatedAt, let date = PearAPI.parseISODate(raw) {
-                        Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
-                            .font(OLSTheme.caption)
-                            .foregroundStyle(OLSTheme.secondary)
-                    }
+            VStack(alignment: .leading, spacing: 10) {
+                OLSKicker(text: detail.brief?.stale == true ? "Last update" : "Right now")
+                Text(self.markdown(summary))
+                    .font(OLSTheme.heading)
+                    .foregroundStyle(OLSTheme.ink)
+                    .tint(OLSTheme.accent)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let raw = detail.brief?.updatedAt, let date = PearAPI.parseISODate(raw) {
+                    Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
+                        .font(OLSTheme.caption)
+                        .foregroundStyle(OLSTheme.secondary)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func work(_ detail: OLSProjectDetail) -> some View {
+    private func needsYou(_ detail: OLSProjectDetail) -> some View {
         let waiting = self.openWork.filter { $0.isBlocked && !($0.blockedBy ?? "").isEmpty }
         if !waiting.isEmpty {
-            OLSCard {
-                VStack(alignment: .leading, spacing: 16) {
-                    OLSSectionHeading(title: "What’s waiting")
-                    ForEach(waiting) { item in
+            VStack(alignment: .leading, spacing: 12) {
+                OLSKicker(text: "Needs you")
+                ForEach(waiting) { item in
+                    OLSCard(padding: 16) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(item.title).font(OLSTheme.label).foregroundStyle(OLSTheme.ink)
-                            Text(item.blockedBy ?? "").font(OLSTheme.body).foregroundStyle(OLSTheme.secondary)
-                        }
-                    }
-                }
-            }
-        }
-        let moving = self.openWork.filter { !$0.isBlocked || ($0.blockedBy ?? "").isEmpty }
-        if !moving.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                OLSSectionHeading(title: "In the works")
-                OLSCard {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(self.showAllWork ? moving : Array(moving.prefix(6))) { item in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(item.title).font(OLSTheme.label).foregroundStyle(OLSTheme.ink)
-                                Text(item.statusLabel).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
-                            }
-                        }
-                        if moving.count > 6 {
-                            Button {
-                                self.showAllWork.toggle()
-                            } label: {
-                                Text(self.showAllWork ? "Show less" : "Show all \(moving.count)")
-                                    .font(OLSTheme.label)
-                                    .frame(minHeight: 44)
-                            }
-                            .foregroundStyle(OLSTheme.accent)
+                            Text(item.title).font(OLSTheme.cardTitle).foregroundStyle(OLSTheme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(item.blockedBy ?? "").font(OLSTheme.label).foregroundStyle(OLSTheme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -390,50 +477,105 @@ private struct OLSProjectDetailView: View {
     }
 
     @ViewBuilder
-    private func materials(_ detail: OLSProjectDetail) -> some View {
+    private func inTheWorks(_ detail: OLSProjectDetail) -> some View {
+        let moving = self.openWork.filter { !$0.isBlocked || ($0.blockedBy ?? "").isEmpty }
+        if !moving.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                OLSSectionHeading(kicker: "In the works", title: "What’s moving")
+                OLSCard(padding: 16) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(self.showAllWork ? moving : Array(moving.prefix(6))) { item in
+                            OLSCardRow(
+                                symbol: item.isBlocked ? "ellipsis" : "checkmark",
+                                text: item.title,
+                                detail: item.statusLabel)
+                        }
+                        if moving.count > 6 {
+                            OLSPillAction(
+                                title: self.showAllWork ? "Show less" : "Show all \(moving.count)",
+                                filled: false)
+                            {
+                                self.showAllWork.toggle()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func files(_ detail: OLSProjectDetail) -> some View {
         let pages = detail.allPages
         let files = (detail.files ?? []).filter { $0.url != nil }
         if !pages.isEmpty || !files.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                OLSSectionHeading(title: "Made and gathered")
-                OLSCard {
-                    VStack(spacing: 0) {
-                        ForEach(pages) { page in
-                            self.fileRow(
-                                title: page.title,
-                                subtitle: "Page",
-                                symbol: "doc.text",
-                                path: page.url ?? "/p/\(page.id)")
-                        }
-                        ForEach(files) { file in
-                            self.fileRow(
-                                title: file.name,
-                                subtitle: self.fileSubtitle(file),
-                                symbol: file.mimeType?.hasPrefix("image/") == true ? "photo" : "doc",
-                                path: file.url ?? "")
-                        }
+            OLSCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    OLSSectionHeading(kicker: "Files", title: "Everything we’re carrying")
+                    ForEach(pages) { page in
+                        self.fileRow(title: page.title, kind: "Page", symbol: "doc.text", path: page.url ?? "/p/\(page.id)")
+                    }
+                    ForEach(files) { file in
+                        self.fileRow(
+                            title: file.name,
+                            kind: self.fileSubtitle(file),
+                            symbol: file.mimeType?.hasPrefix("image/") == true ? "photo" : "doc",
+                            path: file.url ?? "")
                     }
                 }
             }
         }
     }
 
-    private func fileRow(title: String, subtitle: String, symbol: String, path: String) -> some View {
+    private var conversations: some View {
+        OLSCard {
+            VStack(alignment: .leading, spacing: 14) {
+                OLSSectionHeading(kicker: "Conversations", title: "How we got here")
+                ForEach(self.segments) { segment in
+                    let rows = self.model.messages.filter { $0.context?.segmentId == segment.id && !$0.isCommentary }
+                    OLSConversationRow(
+                        emoji: self.currentProject.emoji,
+                        eyebrow: segment.context.displayName,
+                        title: rows.first(where: { !$0.isAssistant }).map { OLSProjectTile.plain($0.text) }
+                            ?? "Return to this conversation",
+                        detail: rows.last(where: { $0.isAssistant }).map { OLSProjectTile.plain($0.text) },
+                        trailing: segment.createdAt.flatMap(PearAPI.parseISODate)
+                            .map { OLSModel.periodLabel(for: $0, now: self.model.now()) })
+                    {
+                        self.jumpToSegment(segment.id)
+                    }
+                    .accessibilityIdentifier("ols.project.conversation.\(segment.id)")
+                }
+            }
+        }
+    }
+
+    private func fileRow(title: String, kind: String, symbol: String, path: String) -> some View {
         Button {
             self.open(path, title: title)
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: symbol).foregroundStyle(OLSTheme.accent).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(title).font(OLSTheme.label).foregroundStyle(OLSTheme.ink)
-                    Text(subtitle).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                Image(systemName: symbol)
+                    .foregroundStyle(OLSTheme.ink)
+                    .frame(width: 40, height: 40)
+                    .background(OLSTheme.soft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    OLSKicker(text: kind)
+                    Text(title).font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
+                        .multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.right").foregroundStyle(OLSTheme.secondary).accessibilityHidden(true)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OLSTheme.secondary)
+                    .accessibilityHidden(true)
             }
-            .padding(.vertical, 12)
+            .padding(12)
             .frame(minHeight: 56)
-            .contentShape(Rectangle())
+            .background(OLSTheme.paper, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(OLSTheme.cardLine) }
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -457,7 +599,7 @@ private struct OLSProjectDetailView: View {
             self.error = "That link isn’t available yet."
             return
         }
-        self.artifact = OLSArtifactSelection(url: url, title: title)
+        self.artifact = OLSArtifact(url: url, title: title)
     }
 
     @MainActor

@@ -2,26 +2,35 @@ import QuickLook
 import SwiftUI
 import WebKit
 
-/// Cards group a useful answer, not every field in a project record.
+/// Card primitives from Mark's screens: eyebrow kicker, serif title, optional rows, one pill action.
+/// Built once here; every surface composes these instead of inventing its own card.
 struct OLSCard<Content: View>: View {
+    var padding: CGFloat = 20
     @ViewBuilder var content: Content
 
     var body: some View {
         self.content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .olsCard()
+            .olsCard(padding: self.padding)
     }
 }
 
+/// `CONTINUE` / `Pick up where we left off`: a kicker over a serif heading.
 struct OLSSectionHeading: View {
+    var kicker: String
     var title: String
     var subtitle: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(self.title).font(OLSTheme.heading).foregroundStyle(OLSTheme.ink)
+        VStack(alignment: .leading, spacing: 8) {
+            OLSKicker(text: self.kicker)
+            Text(self.title)
+                .font(OLSTheme.heading)
+                .foregroundStyle(OLSTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
             if let subtitle = self.subtitle, !subtitle.isEmpty {
                 Text(subtitle).font(OLSTheme.label).foregroundStyle(OLSTheme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .accessibilityElement(children: .combine)
@@ -29,57 +38,222 @@ struct OLSSectionHeading: View {
     }
 }
 
-struct OLSProjectCard: View {
-    var project: PearStatusData.Project
-    var isCurrent: Bool
+/// The one pill action at the foot of a card (`Open the trip ›`).
+struct OLSPillAction: View {
+    var title: String
+    var filled = true
+    var chevron = true
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: self.action) {
+            HStack(spacing: 8) {
+                Text(self.title).font(OLSTheme.action).lineLimit(1)
+                if self.chevron {
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
+                }
+            }
+            .foregroundStyle(OLSTheme.ink)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: self.chevron ? CGFloat.infinity : nil, minHeight: 44)
+            .background(self.filled ? OLSTheme.human : OLSTheme.paper, in: Capsule())
+            .overlay { Capsule().strokeBorder(self.filled ? Color.clear : OLSTheme.cardLine) }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A checklist or fact row inside a card (`✓ Check-in moved to 3:00 PM`).
+struct OLSCardRow: View {
+    var symbol: String
+    var text: String
+    var detail: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: self.symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OLSTheme.secondary)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(self.text).font(OLSTheme.label).foregroundStyle(OLSTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = self.detail, !detail.isEmpty {
+                    Text(detail).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                }
+            }
+        }
+    }
+}
+
+/// The square tile that opens a card row: an emoji on the project's soft tint.
+struct OLSEmojiTile: View {
+    var emoji: String?
+    var size: CGFloat = 44
+
+    var body: some View {
+        Text(self.emoji ?? "🍐")
+            .font(.system(size: self.size * 0.5))
+            .frame(width: self.size, height: self.size)
+            .background(OLSTheme.human, in: RoundedRectangle(cornerRadius: self.size * 0.28, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+/// A file or artifact carried by a message: eyebrow, serif title, one `Open` pill.
+struct OLSAttachmentCard: View {
+    var eyebrow: String
+    var title: String
+    var detail: String?
+    var action: String
+    var onOpen: () -> Void
+
+    var body: some View {
+        OLSCard {
+            VStack(alignment: .leading, spacing: 12) {
+                OLSKicker(text: self.eyebrow)
+                Text(self.title)
+                    .font(OLSTheme.cardTitle)
+                    .foregroundStyle(OLSTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = self.detail, !detail.isEmpty {
+                    Text(detail).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                }
+                OLSPillAction(title: self.action, action: self.onOpen)
+            }
+        }
+    }
+}
+
+/// `I'M KEEPING THIS WITH / <project> / [Yes, keep it here] [Change context]`: shown only when
+/// the backend resolved the latest turn heuristically. Keep dismisses; Change opens the picker.
+struct OLSContextCheckCard: View {
+    var context: OLSContext
+    var project: PearStatusData.Project?
+    var onKeep: () -> Void
+    var onChange: () -> Void
+
+    var body: some View {
+        OLSCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 14) {
+                    OLSEmojiTile(emoji: self.project?.emoji ?? "🍐", size: 48)
+                    VStack(alignment: .leading, spacing: 5) {
+                        OLSKicker(text: "I’m keeping this with")
+                        Text(self.project?.name ?? self.context.displayName)
+                            .font(OLSTheme.cardTitle)
+                            .foregroundStyle(OLSTheme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(self.context.hashtag).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                    }
+                }
+                HStack(spacing: 10) {
+                    OLSPillAction(title: "Yes, keep it here", chevron: false, action: self.onKeep)
+                        .accessibilityIdentifier("ols.context-check.keep")
+                    OLSPillAction(title: "Change context", filled: false, chevron: false, action: self.onChange)
+                        .accessibilityIdentifier("ols.context-check.change")
+                }
+            }
+        }
+        .accessibilityIdentifier("ols.context-check")
+    }
+}
+
+/// A conversation or continue row: project eyebrow, serif title, one-line detail, chevron.
+struct OLSConversationRow: View {
+    var emoji: String?
+    var eyebrow: String
+    var title: String
+    var detail: String?
+    var trailing: String?
     var onOpen: () -> Void
 
     var body: some View {
         Button(action: self.onOpen) {
-            HStack(alignment: .top, spacing: 16) {
-                Text(self.project.emoji ?? "🍐")
-                    .font(OLSTheme.title)
-                    .frame(width: 52, height: 56)
-                    .background(OLSTheme.soft, in: RoundedRectangle(cornerRadius: 15))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 7) {
-                    if self.isCurrent {
-                        Text("Here with you").font(OLSTheme.caption).foregroundStyle(OLSTheme.accent)
+            HStack(alignment: .top, spacing: 14) {
+                OLSEmojiTile(emoji: self.emoji)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        OLSKicker(text: self.eyebrow).lineLimit(1)
+                        Spacer(minLength: 8)
+                        if let trailing = self.trailing {
+                            Text(trailing).font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                        }
                     }
-                    Text(self.project.name)
-                        .font(OLSTheme.heading)
+                    Text(self.title)
+                        .font(OLSTheme.rowTitle)
                         .foregroundStyle(OLSTheme.ink)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let summary = self.project.bestSummary, !summary.isEmpty {
-                        Text(Self.preview(summary))
-                            .font(OLSTheme.label)
-                            .foregroundStyle(OLSTheme.secondary)
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
-                    }
-                    if let date = self.project.updatedDate {
-                        Text(date, style: .relative)
+                    if let detail = self.detail, !detail.isEmpty {
+                        Text(detail)
                             .font(OLSTheme.caption)
                             .foregroundStyle(OLSTheme.secondary)
-                            .accessibilityLabel("Updated \(date.formatted(date: .abbreviated, time: .shortened))")
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
                     }
                 }
-                Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(OLSTheme.secondary)
-                    .padding(.top, 18)
+                    .padding(.top, 14)
                     .accessibilityHidden(true)
             }
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .olsCard()
-            .contentShape(RoundedRectangle(cornerRadius: 22))
+            .background(OLSTheme.paper, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(OLSTheme.cardLine) }
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Open project details")
+    }
+}
+
+/// Project tile for the Details grid: category eyebrow, serif name, summary, on a soft tint.
+struct OLSProjectTile: View {
+    var project: PearStatusData.Project
+    var onOpen: () -> Void
+
+    var body: some View {
+        Button(action: self.onOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    OLSKicker(text: self.project.category ?? "Project").lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(self.project.emoji ?? "🍐").font(.system(size: 18)).accessibilityHidden(true)
+                }
+                Text(self.project.name)
+                    .font(OLSTheme.cardTitle)
+                    .foregroundStyle(OLSTheme.ink)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let summary = self.project.bestSummary, !summary.isEmpty {
+                    Text(OLSProjectTile.plain(summary))
+                        .font(OLSTheme.caption)
+                        .foregroundStyle(OLSTheme.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+                if let date = self.project.updatedDate {
+                    Text("Updated \(date, style: .relative) ago")
+                        .font(OLSTheme.timestamp)
+                        .foregroundStyle(OLSTheme.secondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+            .background(OLSTheme.human, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Open project")
     }
 
-    private static func preview(_ value: String) -> String {
+    static func plain(_ value: String) -> String {
         // The collapsed summary is plain reading text, never a chopped Markdown link.
         let attributed = try? AttributedString(markdown: value)
         return attributed.map { String($0.characters) } ?? value

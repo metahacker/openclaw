@@ -27,14 +27,7 @@ struct OLSVoiceView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Button {
-                    self.stop()
-                    self.onReturn()
-                } label: {
-                    Label { Text("Back").font(OLSTheme.label) } icon: { Image(systemName: "chevron.left") }
-                        .frame(minHeight: 44)
-                }
-                Text("Same conversation.").font(OLSTheme.title)
+                Text("Same conversation.").font(OLSTheme.greeting).padding(.top, 8)
                 Text(self.model.activeContext?.hashtag ?? "Here with you")
                     .font(OLSTheme.chip).foregroundStyle(OLSTheme.secondary)
 
