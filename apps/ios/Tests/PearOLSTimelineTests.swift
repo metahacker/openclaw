@@ -146,6 +146,7 @@ struct PearOLSTimelineTests {
         await task.value
         #expect(model.messages.isEmpty)
     }
+
     @Test func `anchors open each context run and horizontal steps move between neighbours`() {
         let japan = OLSContext(segmentId: "a", projectId: 1, slug: "japan", label: "Japan", source: "named")
         let mvp = OLSContext(segmentId: "b", projectId: 2, slug: "mvp", label: "MVP", source: "named")
@@ -211,11 +212,11 @@ struct PearOLSTimelineTests {
         #expect(model.contextCheck == nil)
     }
 
-    @Test func `day rules follow the prototype: today, yesterday, weekday, then the date`() {
+    @Test func `day rules follow the prototype: today, yesterday, weekday, then the date`() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
         calendar.locale = Locale(identifier: "en_US")
-        let now = PearAPI.parseISODate("2026-09-16T09:41:00Z")!
+        let now = try #require(PearAPI.parseISODate("2026-09-16T09:41:00Z"))
         func label(_ iso: String) -> String {
             OLSModel.periodLabel(for: PearAPI.parseISODate(iso)!, now: now, calendar: calendar)
         }

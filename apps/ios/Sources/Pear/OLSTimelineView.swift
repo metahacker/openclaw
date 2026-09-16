@@ -165,10 +165,10 @@ struct OLSTimelineView: View {
                                 Image(systemName: "arrow.down")
                             }
                             .foregroundStyle(OLSTheme.ink)
-                                .padding(.horizontal, 14).padding(.vertical, 10)
-                                .background(OLSTheme.paper, in: Capsule())
-                                .overlay { Capsule().strokeBorder(OLSTheme.hairline) }
-                                .shadow(color: OLSTheme.composerShadow, radius: 12, y: 8)
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(OLSTheme.paper, in: Capsule())
+                            .overlay { Capsule().strokeBorder(OLSTheme.hairline) }
+                            .shadow(color: OLSTheme.composerShadow, radius: 12, y: 8)
                         }
                         .accessibilityIdentifier("ols.present")
                         .padding(14)

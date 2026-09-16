@@ -176,7 +176,6 @@ struct OLSProjectsView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .background(OLSTheme.workspaceField)
-        .accessibilityIdentifier("ols.projects.surface")
     }
 
     /// `.context-spine`: orb, `THREAD · <when>`, the latest reply, chevron down.
@@ -480,7 +479,7 @@ struct OLSProjectView: View {
                     OLSPillAction(title: "Talk about this", symbol: "bubble.left") {
                         self.talkAbout(self.currentProject)
                     }
-                        .accessibilityIdentifier("ols.talk-about-project")
+                    .accessibilityIdentifier("ols.talk-about-project")
                     if let path = self.detail?.actions?.openProject {
                         OLSPillAction(title: "Full project on the Playground", filled: false, chevron: true) {
                             self.open(path, title: self.currentProject.name)
@@ -498,7 +497,6 @@ struct OLSProjectView: View {
         .fullScreenCover(item: self.$artifact) { item in
             OLSArtifactView(url: item.url, title: item.title) { self.artifact = nil }
         }
-        .accessibilityIdentifier("ols.project.surface")
     }
 
     /// `.project-chrome`: `‹ Projects`, the thread-return pill, and the voice button.
@@ -540,7 +538,7 @@ struct OLSProjectView: View {
 
     private var heroChips: [String] {
         var chips: [String] = []
-        for chip in [self.currentProject.category, self.currentProject.health].compactMap({ $0 })
+        for chip in [self.currentProject.category, self.currentProject.health].compactMap(\.self)
             where !chip.isEmpty && !chips.contains(chip)
         {
             chips.append(chip)
