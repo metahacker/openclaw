@@ -136,11 +136,16 @@ struct OLSTimelineView: View {
                     if self.model.visibleMessageID != first { self.model.visibleMessageID = first }
                 }
                 .onAppear {
-                    // A conversation opens at the present unless a saved place asks otherwise.
-                    if self.model.scrollRequest == nil, self.model.isAtPresent, !self.model.messages.isEmpty {
+                    self.applyScrollRequest(proxy)
+                    // A conversation opens at the present unless a saved place asks otherwise. The
+                    // list has not been laid out yet inside onAppear, so the jump waits one turn.
+                    guard self.model.scrollRequest == nil, self.model.isAtPresent, !self.model.messages.isEmpty
+                    else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard self.model.scrollRequest == nil, self.model.isAtPresent else { return }
                         proxy.scrollTo("ols-bottom", anchor: .bottom)
                     }
-                    self.applyScrollRequest(proxy)
                 }
                 .onChange(of: self.model.scrollRequest) { _, _ in self.applyScrollRequest(proxy) }
                 .onChange(of: self.model.messages.count) { _, _ in self.applyScrollRequest(proxy) }
