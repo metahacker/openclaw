@@ -7,10 +7,12 @@ final class PearOLSUITests: XCTestCase {
         app.launchArguments = ["--pear-ols-screenshot"]
         app.launch()
         XCTAssertTrue(app.scrollViews["ols.timeline"].waitForExistence(timeout: 15))
-        // The prototype's thread: presence button, subtitle, project object, rules, bubbles, composer, edge.
+        // The thread: presence button, quiet context echo, scrolling rules/bubbles, composer, and edge.
         XCTAssertTrue(app.buttons["ols.voice"].exists)
-        XCTAssertTrue(app.buttons["ols.context"].exists)
-        XCTAssertTrue(app.buttons["ols.object"].waitForExistence(timeout: 5))
+        let context = app.buttons["ols.context"]
+        XCTAssertTrue(context.waitForExistence(timeout: 5))
+        XCTAssertEqual(context.value as? String, "#japan-family-trip")
+        XCTAssertFalse(app.buttons["ols.object"].exists)
         XCTAssertTrue(app.buttons["ols.anchor.sample-japan-1"].exists)
         XCTAssertTrue(app.staticTexts["ols.commentary.commentary:sample"].exists)
         XCTAssertTrue(app.buttons["ols.projects"].exists)

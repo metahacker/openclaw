@@ -9,7 +9,6 @@ struct OLSRootView: View {
     @State private var auth = PearAuthModel()
     @State private var model = OLSModel()
     @State private var projects: [PearStatusData.Project] = []
-    @State private var activeDetail: OLSProjectDetail?
     @State private var openedProject: PearStatusData.Project?
     @State private var surface: Surface = .chat
     @State private var voiceOrigin: Surface = .chat
@@ -40,13 +39,8 @@ struct OLSRootView: View {
                     OLSTimelineView(
                         model: self.model,
                         projects: self.projects,
-                        activeDetail: self.activeDetail,
                         openContext: { self.showContext = true },
                         openProjects: { self.navigate(.projects) },
-                        openProject: { project in
-                            self.openedProject = project
-                            self.navigate(.project)
-                        },
                         openVoice: { self.navigate(.voice) })
                 } else {
                     self.signIn
@@ -118,7 +112,6 @@ struct OLSRootView: View {
             } else {
                 self.model.clear()
                 self.projects = []
-                self.activeDetail = nil
                 self.openedProject = nil
                 self.surface = .chat
             }
@@ -126,10 +119,6 @@ struct OLSRootView: View {
         .onChange(of: self.scenePhase) { _, phase in
             guard !self.screenshotMode else { return }
             if phase == .active, self.auth.isSignedIn { self.model.start() } else { self.model.stop() }
-        }
-        .onChange(of: self.model.activeContext?.projectId) { _, projectID in
-            guard !self.screenshotMode else { return }
-            Task { await self.loadActiveDetail(projectID) }
         }
         .sheet(isPresented: self.$showContext) { self.contextPicker }
         .sheet(isPresented: self.$showProfile) { self.profile }
@@ -185,6 +174,7 @@ struct OLSRootView: View {
                 .disabled(!self.signedIn)
                 .accessibilityIdentifier("ols.context")
                 .accessibilityLabel("Context and places in our conversation")
+                .accessibilityValue(self.subtitle)
             }
             Spacer(minLength: 8)
             Button { self.showProfile = true } label: {
@@ -208,7 +198,8 @@ struct OLSRootView: View {
     /// of the moment being read when that adds information.
     private var subtitle: String {
         if self.model.isSending { return "Working with you" }
-        guard self.signedIn, let context = self.model.context(before: self.model.visibleMessageID),
+        guard self.signedIn,
+              let context = self.model.context(before: self.model.visibleMessageID) ?? self.model.activeContext,
               context.slug?.isEmpty == false
         else { return "Here with you" }
         return context.hashtag
@@ -432,19 +423,6 @@ struct OLSRootView: View {
             guard self.auth.isSignedIn, PearSessionStore.load()?.sessionID == identity else { return }
             self.projectError = "Projects couldn’t load just now."
         }
-        await self.loadActiveDetail(self.model.activeContext?.projectId)
-    }
-
-    /// The object card's decision row needs the project's tasks; only the current project is fetched.
-    private func loadActiveDetail(_ projectID: Int?) async {
-        guard let projectID else {
-            self.activeDetail = nil
-            return
-        }
-        if self.activeDetail?.project.id == projectID { return }
-        let detail: OLSProjectDetail? = try? await OLSClient().get("/api/ols/projects/\(projectID)")
-        guard self.model.activeContext?.projectId == projectID else { return }
-        self.activeDetail = detail
     }
 }
 

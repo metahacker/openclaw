@@ -1,16 +1,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The prototype's thread surface: the current project object pinned above the flow, day
-/// rules and inline `#project` anchors in the same rule style, PEAR bubbles left and human
-/// bubbles right with timestamps, the composer pill, and the Projects edge at the bottom.
+/// The conversation surface: day rules and inline `#project` anchors scroll with PEAR and
+/// human bubbles, while the composer and Projects edge remain available around the flow.
 struct OLSTimelineView: View {
     @Bindable var model: OLSModel
     let projects: [PearStatusData.Project]
-    let activeDetail: OLSProjectDetail?
     let openContext: () -> Void
     let openProjects: () -> Void
-    let openProject: (PearStatusData.Project) -> Void
     let openVoice: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var composerFocused = false
@@ -59,26 +56,8 @@ struct OLSTimelineView: View {
         return self.projects.first(where: { $0.id == context?.projectId })
     }
 
-    private var openDecision: OLSProjectDetail.Work? {
-        guard let detail = self.activeDetail, detail.project.id == self.currentProject?.id else { return nil }
-        return detail.tasks?.first(where: { $0.isBlocked && !($0.blockedBy ?? "").isEmpty })
-    }
-
     var body: some View {
         VStack(spacing: 0) {
-            if let project = self.currentProject {
-                OLSProjectObjectCard(
-                    project: project,
-                    detail: project.bestSummary.map(OLSPlainText.firstSentence),
-                    decision: self.openDecision,
-                    onOpen: { self.openProject(project) },
-                    onDecide: { self.openProject(project) })
-                    .padding(.horizontal, 18)
-                    .padding(.top, 14)
-                    .padding(.bottom, 8)
-                    .frame(maxWidth: 740)
-                    .zIndex(2)
-            }
             ScrollViewReader { proxy in
                 ScrollView {
                     // Not lazy: a lazy stack's estimated content frame changes with the scroll
