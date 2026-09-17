@@ -118,32 +118,28 @@ struct OLSTimelineView: View {
                     guard let first = ids.first(where: { $0 != "ols-bottom" }) else { return }
                     if self.model.visibleMessageID != first { self.model.visibleMessageID = first }
                 }
-                .onAppear {
-                    self.applyScrollRequest(proxy)
-                    // A conversation opens at the present unless a saved place asks otherwise. The
-                    // list has not been laid out yet inside onAppear, so the jump waits one turn.
-                    guard self.model.scrollRequest == nil, self.model.isAtPresent, !self.model.messages.isEmpty
+                .onAppear { self.applyScrollRequest(proxy) }
+                .onChange(of: self.model.scrollRequest) { _, _ in self.applyScrollRequest(proxy) }
+                .onChange(of: self.model.messages.count) { _, _ in self.applyScrollRequest(proxy) }
+                // The present follows the content, not the message change: a scroll issued in the
+                // same pass as the change lands on the old bottom, which is what left earlier proofs
+                // at the top of the thread. The geometry callback runs once the new rows are laid
+                // out, so opening, a reply, or a queued turn all settle at the true bottom while the
+                // person is at the present; a saved place or an anchor jump is never overridden.
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+                    guard new != old, self.model.isAtPresent, self.model.scrollRequest == nil,
+                          !self.model.messages.isEmpty
                     else { return }
-                    Task { @MainActor in
-                        await Task.yield()
-                        guard self.model.scrollRequest == nil, self.model.isAtPresent else { return }
+                    withAnimation(self.reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         proxy.scrollTo("ols-bottom", anchor: .bottom)
                     }
                 }
-                .onChange(of: self.model.scrollRequest) { _, _ in self.applyScrollRequest(proxy) }
-                .onChange(of: self.model.messages.count) { _, _ in self.applyScrollRequest(proxy) }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
                     geometry.contentSize.height - (geometry.contentOffset.y + geometry.containerSize.height)
                 } action: { _, distance in
                     // Hysteresis: a few points of keyboard-layout wobble must not toggle state.
                     let atPresent = distance <= (self.model.isAtPresent ? 160 : 60)
                     if self.model.isAtPresent != atPresent { self.model.isAtPresent = atPresent }
-                }
-                .onChange(of: self.model.messages.last) { _, _ in
-                    guard self.model.isAtPresent else { return }
-                    withAnimation(self.reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                        proxy.scrollTo("ols-bottom", anchor: .bottom)
-                    }
                 }
                 .overlay(alignment: .bottomTrailing) {
                     if !self.model.isAtPresent, !self.model.messages.isEmpty {

@@ -16,6 +16,8 @@ final class PearOLSUITests: XCTestCase {
             object: context)
         XCTAssertEqual(XCTWaiter.wait(for: [contextHashtag], timeout: 5), .completed)
         XCTAssertFalse(app.buttons["ols.object"].exists)
+        // Opening lands at the present: the Present pill only appears once the person scrolls up.
+        XCTAssertFalse(app.buttons["ols.present"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.buttons["ols.anchor.sample-japan-1"].exists)
         // One stream across surfaces: a Slack run and an unplaced text sit inline, named quietly.
         let slackAnchor = app.buttons["ols.anchor.sample-ny-slack"]

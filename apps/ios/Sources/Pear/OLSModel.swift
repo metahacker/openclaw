@@ -415,7 +415,12 @@ final class OLSModel {
     /// `Today` / `Yesterday` / `Sunday` / `August 12`: the prototype's day rule text.
     static func periodLabel(for date: Date, now: Date, calendar: Calendar = .autoupdatingCurrent) -> String {
         if calendar.isDate(date, inSameDayAs: now) { return "Today" }
-        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        // Relative to the injected clock, not the wall clock, so fixtures and tests stay stable.
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday)
+        {
+            return "Yesterday"
+        }
         let style = Date.FormatStyle(
             locale: calendar.locale ?? .autoupdatingCurrent,
             calendar: calendar,
