@@ -543,58 +543,43 @@ final class OLSModel {
             provisional: true,
             originSegmentId: "sample-japan-2",
             surface: "app")
+        let plan = OLSAttachment(
+            id: "sample-plan",
+            url: "https://pear.metahack.io/api/ols/files/sample-plan",
+            name: "Tokyo day plan.pdf",
+            mimeType: "application/pdf")
+        let resume = OLSRouting(decision: "resume", trigger: "similarity", sessionRef: "pear:ols:v1:sample:c1")
+        let stay = OLSRouting(decision: "stay", trigger: nil, sessionRef: "pear:ols:v1:sample:c1")
         self.messages = [
-            OLSMessage(
-                id: "1",
-                role: "user",
-                text: "Our Tokyo hotel moved check-in. Can you make sure the quieter afternoon still works?",
-                createdAt: "2026-09-16T07:38:00Z",
-                context: japan,
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c1",
-                dispatchState: "accepted"),
-            OLSMessage(
-                id: "2",
-                role: "assistant",
-                text: "I moved the slower afternoon forward and kept the family dinner open. "
+            Self.sample(
+                "1",
+                "Our Tokyo hotel moved check-in. Can you make sure the quieter afternoon still works?",
+                at: "2026-09-16T07:38:00Z",
+                in: japan),
+            Self.sample(
+                "2",
+                "I moved the slower afternoon forward and kept the family dinner open. "
                     + "The route and reservations still agree.",
-                createdAt: "2026-09-16T07:40:00Z",
-                context: japan,
-                attachments: [OLSAttachment(
-                    id: "sample-plan",
-                    url: "https://pear.metahack.io/api/ols/files/sample-plan",
-                    name: "Tokyo day plan.pdf",
-                    mimeType: "application/pdf")],
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c1",
-                dispatchState: "delivered"),
-            OLSMessage(
-                id: "3",
-                role: "user",
-                text: "Mom’s flight now lands at six. Can Thursday dinner hold?",
-                createdAt: "2026-09-16T08:12:00Z",
-                context: newYork,
-                surface: "slack",
-                sessionRef: "channel:sample:thread:sample-ny",
-                dispatchState: "accepted"),
-            OLSMessage(
-                id: "4",
-                role: "assistant",
-                text: "Thursday holds. I moved the table to seven and told the restaurant.",
-                createdAt: "2026-09-16T08:14:00Z",
-                context: newYork,
-                surface: "slack",
-                sessionRef: "channel:sample:thread:sample-ny",
-                dispatchState: "delivered"),
-            OLSMessage(
-                id: "5",
-                role: "user",
-                text: "Back to the MVP UI—give Mark complete screens, not a design system.",
-                createdAt: "2026-09-16T09:27:00Z",
-                context: mvp,
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c2",
-                dispatchState: "accepted"),
+                at: "2026-09-16T07:40:00Z",
+                in: japan,
+                reply: true,
+                attachments: [plan]),
+            Self.sample(
+                "3",
+                "Mom’s flight now lands at six. Can Thursday dinner hold?",
+                at: "2026-09-16T08:12:00Z",
+                in: newYork),
+            Self.sample(
+                "4",
+                "Thursday holds. I moved the table to seven and told the restaurant.",
+                at: "2026-09-16T08:14:00Z",
+                in: newYork,
+                reply: true),
+            Self.sample(
+                "5",
+                "Back to the MVP UI—give Mark complete screens, not a design system.",
+                at: "2026-09-16T09:27:00Z",
+                in: mvp),
             OLSMessage(
                 id: "commentary:sample",
                 kind: "commentary",
@@ -602,53 +587,32 @@ final class OLSModel {
                 text: "I’m laying out the whole composition before extracting anything.",
                 createdAt: "2026-09-16T09:28:00Z",
                 context: mvp),
-            OLSMessage(
-                id: "6",
-                role: "assistant",
-                text: "Whole composition first. I’ll extract the system after the visual language coheres.",
-                createdAt: "2026-09-16T09:29:00Z",
-                context: mvp,
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c2",
-                dispatchState: "delivered"),
-            OLSMessage(
-                id: "7",
-                role: "user",
-                text: "Landed. Call you in ten.",
-                createdAt: "2026-09-16T09:33:00Z",
-                context: texts,
-                surface: "sendblue",
-                sessionRef: "+15555550100:c3",
-                dispatchState: "accepted"),
-            OLSMessage(
-                id: "8",
-                role: "user",
-                text: "And the Kyoto dinner—did that get settled?",
-                createdAt: "2026-09-16T09:36:00Z",
-                context: japanAgain,
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c1",
-                dispatchState: "accepted",
-                routing: OLSRouting(decision: "resume", trigger: "similarity", sessionRef: "pear:ols:v1:sample:c1")),
-            OLSMessage(
-                id: "9",
-                role: "assistant",
-                text: "Not yet. Two good paths remain, and no reservation has been made.",
-                createdAt: "2026-09-16T09:38:00Z",
-                context: japanAgain,
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c1",
-                dispatchState: "delivered"),
-            OLSMessage(
-                id: "10",
-                role: "user",
-                text: "Take the riverside one if it still has the early seating.",
-                createdAt: "2026-09-16T09:40:00Z",
-                context: japanAgain,
-                surface: "app",
-                sessionRef: "pear:ols:v1:sample:c1",
-                dispatchState: "queued",
-                routing: OLSRouting(decision: "stay", trigger: nil, sessionRef: "pear:ols:v1:sample:c1")),
+            Self.sample(
+                "6",
+                "Whole composition first. I’ll extract the system after the visual language coheres.",
+                at: "2026-09-16T09:29:00Z",
+                in: mvp,
+                reply: true),
+            Self.sample("7", "Landed. Call you in ten.", at: "2026-09-16T09:33:00Z", in: texts),
+            Self.sample(
+                "8",
+                "And the Kyoto dinner—did that get settled?",
+                at: "2026-09-16T09:36:00Z",
+                in: japanAgain,
+                routing: resume),
+            Self.sample(
+                "9",
+                "Not yet. Two good paths remain, and no reservation has been made.",
+                at: "2026-09-16T09:38:00Z",
+                in: japanAgain,
+                reply: true),
+            Self.sample(
+                "10",
+                "Take the riverside one if it still has the early seating.",
+                at: "2026-09-16T09:40:00Z",
+                in: japanAgain,
+                state: "queued",
+                routing: stay),
         ]
         self.segments = [
             Self.sampleSegment(japanAgain, first: "8", last: "10", count: 3, createdAt: "2026-09-16T09:36:00Z"),
@@ -658,6 +622,35 @@ final class OLSModel {
             Self.sampleSegment(japan, first: "1", last: "2", count: 2, createdAt: "2026-09-16T07:38:00Z"),
         ]
         self.activeContext = japanAgain
+    }
+
+    /// A fixture turn on the surface its context names; the session reference follows the surface.
+    private static func sample(
+        _ id: String,
+        _ text: String,
+        at createdAt: String,
+        in context: OLSContext,
+        reply: Bool = false,
+        state: String? = nil,
+        routing: OLSRouting? = nil,
+        attachments: [OLSAttachment]? = nil) -> OLSMessage
+    {
+        let sessionRef = switch context.surfaceKind {
+        case .app: "pear:ols:v1:sample:\(context.projectId == 2 ? "c2" : "c1")"
+        case .slack, .dm: "channel:sample:thread:\(context.originSegmentId ?? "")"
+        case .sendblue: "+15555550100:c3"
+        }
+        return OLSMessage(
+            id: id,
+            role: reply ? "assistant" : "user",
+            text: text,
+            createdAt: createdAt,
+            context: context,
+            attachments: attachments,
+            surface: context.surface,
+            sessionRef: sessionRef,
+            dispatchState: state ?? (reply ? "delivered" : "accepted"),
+            routing: routing)
     }
 
     private static func sampleSegment(
