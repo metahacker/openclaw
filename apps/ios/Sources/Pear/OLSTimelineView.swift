@@ -14,6 +14,10 @@ struct OLSTimelineView: View {
     @State private var artifact: OLSArtifact?
     @State private var width: CGFloat = 390
     @State private var anchorJumps = 0
+    /// True while a jump or follow we issued is scrolling. Visibility tracking and the
+    /// at-present decision wait for the person's own scroll, so a tall screen that cannot bring
+    /// a chosen moment to the top neither renames the moment nor calls it the present.
+    @State private var programmaticScroll = false
 
     /// Horizontal anchor swipes: deliberate and axis-dominant (the prototype's 72pt / 1.4×).
     private static let swipeDistance: CGFloat = 72
@@ -115,7 +119,8 @@ struct OLSTimelineView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { self.width = $0 }
                 .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
-                    guard let first = ids.first(where: { $0 != "ols-bottom" }) else { return }
+                    guard !self.programmaticScroll, let first = ids.first(where: { $0 != "ols-bottom" })
+                    else { return }
                     if self.model.visibleMessageID != first { self.model.visibleMessageID = first }
                 }
                 .onAppear { self.applyScrollRequest(proxy) }
@@ -135,8 +140,12 @@ struct OLSTimelineView: View {
                 // Only a finished scroll, the person's or ours, decides whether they are at the
                 // present. Content growing under a still list must not flip it: that is exactly the
                 // moment the list is about to follow.
-                .onScrollPhaseChange { _, phase, context in
+                .onScrollPhaseChange { previous, phase, context in
                     guard phase == .idle else { return }
+                    if previous == .animating || self.programmaticScroll {
+                        self.programmaticScroll = false
+                        return
+                    }
                     let geometry = context.geometry
                     let distance = geometry.contentSize.height
                         - (geometry.contentOffset.y + geometry.containerSize.height)
@@ -210,9 +219,20 @@ struct OLSTimelineView: View {
         Task { @MainActor in
             await Task.yield()
             guard self.model.isAtPresent, self.model.scrollRequest == nil else { return }
+            self.beginProgrammaticScroll()
             withAnimation(self.reduceMotion ? nil : .easeOut(duration: 0.2)) {
                 proxy.scrollTo("ols-bottom", anchor: .bottom)
             }
+        }
+    }
+
+    /// The flag clears when the scroll phase settles; a scroll that never changes phase (reduced
+    /// motion, or nothing to move) clears it shortly after instead.
+    private func beginProgrammaticScroll() {
+        self.programmaticScroll = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(700))
+            self.programmaticScroll = false
         }
     }
 
@@ -221,6 +241,7 @@ struct OLSTimelineView: View {
         guard let request = self.model.scrollRequest,
               self.model.messages.contains(where: { $0.id == request.messageID })
         else { return }
+        self.beginProgrammaticScroll()
         withAnimation(self.reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.85)) {
             proxy.scrollTo(request.messageID, anchor: .top)
         }
