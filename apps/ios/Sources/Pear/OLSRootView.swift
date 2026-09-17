@@ -195,14 +195,18 @@ struct OLSRootView: View {
     }
 
     /// `Here with you` normally, `Working with you` while a send is in flight, and the hashtag
-    /// of the moment being read when that adds information.
+    /// of the moment being read when that adds information. At the present that moment is the
+    /// present itself, whatever older run a tall screen still shows above it.
     private var subtitle: String {
         if self.model.isSending { return "Working with you" }
-        guard self.signedIn,
-              let context = self.model.context(before: self.model.visibleMessageID) ?? self.model.activeContext,
-              context.slug?.isEmpty == false
+        guard self.signedIn, let context = self.readingContext, context.slug?.isEmpty == false
         else { return "Here with you" }
         return context.hashtag
+    }
+
+    private var readingContext: OLSContext? {
+        if self.model.isAtPresent { return self.model.activeContext }
+        return self.model.context(before: self.model.visibleMessageID) ?? self.model.activeContext
     }
 
     private var originLabel: String {
