@@ -1,6 +1,34 @@
 import Foundation
 
+/// Where a turn happened. The app is one surface among the person's others; the stream
+/// interleaves them all and names the others only quietly.
+enum OLSSurface: String, Sendable {
+    case app, slack, dm, sendblue
+
+    init(_ raw: String?) {
+        self = raw.flatMap(OLSSurface.init(rawValue:)) ?? .app
+    }
+
+    /// `Slack`, `Messages` (the texting lane), nil for the app itself.
+    var name: String? {
+        switch self {
+        case .app: nil
+        case .slack, .dm: "Slack"
+        case .sendblue: "Messages"
+        }
+    }
+
+    var symbolName: String? {
+        switch self {
+        case .app: nil
+        case .slack, .dm: "bubble.left"
+        case .sendblue: "message"
+        }
+    }
+}
+
 struct OLSContext: Codable, Equatable, Identifiable, Sendable {
+    /// The visible chronological run this turn belongs to (an entry in `segments`).
     var segmentId: String
     var projectId: Int?
     var slug: String?
@@ -8,9 +36,16 @@ struct OLSContext: Codable, Equatable, Identifiable, Sendable {
     var source: String?
     /// The backend resolved this context heuristically; the person may correct it.
     var provisional: Bool?
+    /// The immutable stored attribution; returning to a subject opens a new run, not a new origin.
+    var originSegmentId: String?
+    var surface: String?
 
     var id: String {
         self.segmentId
+    }
+
+    var surfaceKind: OLSSurface {
+        OLSSurface(self.surface)
     }
 
     /// `Japan family trip` when the project is known, otherwise the hashtag.
@@ -36,6 +71,13 @@ struct OLSAttachment: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// How the shared router placed an app turn: stay in, resume, or open a working session.
+struct OLSRouting: Codable, Equatable, Sendable {
+    var decision: String?
+    var trigger: String?
+    var sessionRef: String?
+}
+
 struct OLSMessage: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var kind: String?
@@ -45,6 +87,12 @@ struct OLSMessage: Codable, Equatable, Identifiable, Sendable {
     var createdAt: String
     var context: OLSContext?
     var attachments: [OLSAttachment]?
+    var surface: String?
+    /// The runtime session the turn lives in: an epoch page for app turns, a thread ref elsewhere.
+    var sessionRef: String?
+    /// `accepted` · `queued` · `failed` · `delivery-unknown` · `delivered`.
+    var dispatchState: String?
+    var routing: OLSRouting?
 
     var isAssistant: Bool {
         self.role == "assistant" || self.role == "pear"
@@ -52,6 +100,24 @@ struct OLSMessage: Codable, Equatable, Identifiable, Sendable {
 
     var isCommentary: Bool {
         self.kind == "commentary"
+    }
+
+    var surfaceKind: OLSSurface {
+        OLSSurface(self.surface)
+    }
+
+    /// A turn the person typed here; only these can be corrected or retried from the app.
+    var isAppTurn: Bool {
+        !self.isAssistant && !self.isCommentary && self.surfaceKind == .app
+    }
+
+    /// Honest pending state: a queued turn is persisted and will go out when the lane frees.
+    var isQueued: Bool {
+        self.dispatchState == "queued"
+    }
+
+    var isFailed: Bool {
+        self.dispatchState == "failed"
     }
 }
 
@@ -70,8 +136,8 @@ struct OLSProgressFeed: Codable, Equatable, Sendable {
     var statuses: [OLSProgressStatus]
 }
 
-/// One chronological run of turns inside a project; the server lists every segment the
-/// person owns, including ones whose messages are not loaded yet.
+/// One visible chronological run of turns inside a project on one page of the stream.
+/// Returning to a subject opens a new run with the same project identity (contract 1424).
 struct OLSSegment: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var projectId: Int?
@@ -80,6 +146,12 @@ struct OLSSegment: Codable, Equatable, Identifiable, Sendable {
     var source: String?
     var provisional: Bool?
     var createdAt: String?
+    var originSegmentId: String?
+    var page: String?
+    var surface: String?
+    var firstMessageId: String?
+    var lastMessageId: String?
+    var count: Int?
 
     var context: OLSContext {
         OLSContext(
@@ -88,8 +160,22 @@ struct OLSSegment: Codable, Equatable, Identifiable, Sendable {
             slug: self.slug,
             label: self.label,
             source: self.source,
-            provisional: self.provisional)
+            provisional: self.provisional,
+            originSegmentId: self.originSegmentId,
+            surface: self.surface)
     }
+
+    var surfaceKind: OLSSurface {
+        OLSSurface(self.surface)
+    }
+}
+
+/// The display window the opening request covered; older history stays reachable by paging.
+struct OLSWindow: Codable, Equatable, Sendable {
+    var hours: Int
+    var since: String?
+    var until: String?
+    var applied: Bool?
 }
 
 struct OLSTimeline: Codable, Sendable {
@@ -100,6 +186,8 @@ struct OLSTimeline: Codable, Sendable {
     var activeContext: OLSContext?
     var segments: [OLSSegment]?
     var status: String?
+    var window: OLSWindow?
+    var activePage: String?
 }
 
 struct OLSSendReceipt: Codable, Sendable {
@@ -108,8 +196,14 @@ struct OLSSendReceipt: Codable, Sendable {
     var clientRequestId: String?
     var segmentId: String?
     var context: OLSContext?
+    /// The working session the router chose (`pear:ols:v1:<stream>:c<n>`); `sessionRef` echoes it.
     var page: String?
+    var sessionRef: String?
     var status: String?
+    /// HTTP 202: the lane was busy, the turn is persisted and will dispatch through the queue.
+    var queued: Bool?
+    var routing: OLSRouting?
+    var duplicate: Bool?
     var error: String?
 }
 

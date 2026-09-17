@@ -7,8 +7,13 @@ import Observation
 final class OLSModel {
     private(set) var messages: [OLSMessage] = []
     private(set) var activeContext: OLSContext?
-    /// Every segment the person owns, newest first, including ones not loaded yet.
+    /// Visible runs from every loaded page, newest first. The server computes runs per page;
+    /// merging here keeps the picker and Projects honest after paging back.
     private(set) var segments: [OLSSegment] = []
+    /// The opening display window (hours) when the server applied one; nil before the first page.
+    private(set) var windowHours: Int?
+    /// True once paging has reached history older than the opening window.
+    private(set) var beyondWindow = false
     /// Display name from the signed-in identity; nil keeps the greeting nameless.
     var personName: String?
     /// The segment whose context-check card the person already answered.
@@ -151,10 +156,11 @@ final class OLSModel {
             let wasEmpty = self.messages.isEmpty
             self.merge(page.items)
             self.activeContext = page.activeContext
-            if let segments = page.segments { self.segments = segments }
+            self.mergeSegments(page.segments)
             if wasEmpty {
                 self.beforeCursor = page.beforeCursor
                 self.hasMore = page.hasMore
+                if let window = page.window, window.applied != false { self.windowHours = window.hours }
             }
             self.error = nil
         } catch is CancellationError {
@@ -200,8 +206,10 @@ final class OLSModel {
             let page = try await self.service.timeline(before: beforeCursor)
             guard self.generation == generation else { return }
             self.merge(page.items)
+            self.mergeSegments(page.segments)
             self.beforeCursor = page.beforeCursor
             self.hasMore = page.hasMore
+            self.beyondWindow = true
             self.error = nil
         } catch {
             guard self.generation == generation else { return }
@@ -295,6 +303,8 @@ final class OLSModel {
         self.messages = []
         self.activeContext = nil
         self.segments = []
+        self.windowHours = nil
+        self.beyondWindow = false
         self.personName = nil
         self.dismissedContextCheck = nil
         self.draft = ""
@@ -311,17 +321,26 @@ final class OLSModel {
 
     // MARK: - Inline anchors
 
-    /// IDs of the messages that open a new context segment, in timeline order.
+    /// IDs of the messages that open a new context run, in timeline order.
     /// Returning to a subject later opens a new anchor; earlier ones are never regrouped.
+    /// Runs are computed per page, so two runs of one project that touch across a page
+    /// boundary read as a single anchor here.
     static func anchorIDs(_ messages: [OLSMessage]) -> [String] {
-        var previous: String?
+        var previous: OLSContext?
         var ids: [String] = []
         for message in messages {
-            guard let segment = message.context?.segmentId else { continue }
-            if segment != previous { ids.append(message.id) }
-            previous = segment
+            guard let context = message.context else { continue }
+            if !self.sameRun(context, previous) { ids.append(message.id) }
+            previous = context
         }
         return ids
+    }
+
+    private static func sameRun(_ context: OLSContext, _ previous: OLSContext?) -> Bool {
+        guard let previous else { return false }
+        if context.segmentId == previous.segmentId { return true }
+        guard let project = context.projectId else { return false }
+        return project == previous.projectId
     }
 
     var anchorIDs: [String] {
@@ -377,9 +396,10 @@ final class OLSModel {
 
     // MARK: - Context check
 
-    /// The latest turn's context when the backend only guessed it; the person can keep or change it.
+    /// The latest app turn's context when the backend only guessed it; the person can keep or
+    /// change it. Turns from Slack or Messages are read here, never corrected here.
     var contextCheck: OLSContext? {
-        guard let latest = self.messages.last(where: { !$0.isCommentary && !$0.isAssistant }),
+        guard let latest = self.messages.last(where: \.isAppTurn),
               let context = latest.context, context.provisional == true,
               context.segmentId != self.dismissedContextCheck
         else { return nil }
@@ -412,6 +432,16 @@ final class OLSModel {
     func periodLabel(for message: OLSMessage) -> String? {
         guard let date = PearAPI.parseISODate(message.createdAt) else { return nil }
         return Self.periodLabel(for: date, now: self.now())
+    }
+
+    private func mergeSegments(_ incoming: [OLSSegment]?) {
+        guard let incoming, !incoming.isEmpty else { return }
+        var byID = Dictionary(self.segments.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        for segment in incoming { byID[segment.id] = segment }
+        self.segments = byID.values.sorted {
+            if $0.createdAt != $1.createdAt { return ($0.createdAt ?? "") > ($1.createdAt ?? "") }
+            return $0.id.localizedStandardCompare($1.id) == .orderedDescending
+        }
     }
 
     private func merge(_ incoming: [OLSMessage]) {
@@ -460,39 +490,69 @@ final class OLSModel {
             summary: "Travel and family coordination are current."),
     ]
 
-    /// A → B → A: two Japan segments around one PEAR MVP segment, one attachment card, one
-    /// provisional context check. Fixed clock so the kicker and labels are stable in CI.
+    /// The recent stream across surfaces: two Japan runs (app) around one New York run that
+    /// happened on Slack and one PEAR MVP run (app), a text with no project yet, one queued turn,
+    /// one attachment card, one provisional context check. Fixed clock so labels are stable in CI.
     func installScreenshotFixture() {
         self.now = { PearAPI.parseISODate("2026-09-16T09:41:00Z") ?? Date() }
         self.personName = "Alex"
+        self.windowHours = 24
+        self.hasMore = true
         let japan = OLSContext(
             segmentId: "sample-japan-1",
             projectId: 1,
             slug: "japan-family-trip",
             label: "Japan family trip",
             source: "named",
-            provisional: false)
+            provisional: false,
+            originSegmentId: "sample-japan-1",
+            surface: "app")
+        let newYork = OLSContext(
+            segmentId: "sample-ny-slack",
+            projectId: 3,
+            slug: "new-york-arrangements",
+            label: "New York arrangements",
+            source: "session",
+            provisional: false,
+            originSegmentId: "slack:sample-ny",
+            surface: "slack")
         let mvp = OLSContext(
             segmentId: "sample-mvp",
             projectId: 2,
             slug: "pear-mvp",
             label: "PEAR MVP",
             source: "named",
-            provisional: false)
+            provisional: false,
+            originSegmentId: "sample-mvp",
+            surface: "app")
+        let texts = OLSContext(
+            segmentId: "sample-texts",
+            projectId: nil,
+            slug: nil,
+            label: "Here with you",
+            source: "unresolved",
+            provisional: true,
+            originSegmentId: "sb:sample-texts",
+            surface: "sendblue")
         let japanAgain = OLSContext(
             segmentId: "sample-japan-2",
             projectId: 1,
             slug: "japan-family-trip",
             label: "Japan family trip",
-            source: "heuristic",
-            provisional: true)
+            source: "llm",
+            provisional: true,
+            originSegmentId: "sample-japan-2",
+            surface: "app")
         self.messages = [
             OLSMessage(
                 id: "1",
                 role: "user",
                 text: "Our Tokyo hotel moved check-in. Can you make sure the quieter afternoon still works?",
                 createdAt: "2026-09-16T07:38:00Z",
-                context: japan),
+                context: japan,
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c1",
+                dispatchState: "accepted"),
             OLSMessage(
                 id: "2",
                 role: "assistant",
@@ -504,13 +564,37 @@ final class OLSModel {
                     id: "sample-plan",
                     url: "https://pear.metahack.io/api/ols/files/sample-plan",
                     name: "Tokyo day plan.pdf",
-                    mimeType: "application/pdf")]),
+                    mimeType: "application/pdf")],
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c1",
+                dispatchState: "delivered"),
             OLSMessage(
                 id: "3",
                 role: "user",
+                text: "Mom’s flight now lands at six. Can Thursday dinner hold?",
+                createdAt: "2026-09-16T08:12:00Z",
+                context: newYork,
+                surface: "slack",
+                sessionRef: "channel:sample:thread:sample-ny",
+                dispatchState: "accepted"),
+            OLSMessage(
+                id: "4",
+                role: "assistant",
+                text: "Thursday holds. I moved the table to seven and told the restaurant.",
+                createdAt: "2026-09-16T08:14:00Z",
+                context: newYork,
+                surface: "slack",
+                sessionRef: "channel:sample:thread:sample-ny",
+                dispatchState: "delivered"),
+            OLSMessage(
+                id: "5",
+                role: "user",
                 text: "Back to the MVP UI—give Mark complete screens, not a design system.",
                 createdAt: "2026-09-16T09:27:00Z",
-                context: mvp),
+                context: mvp,
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c2",
+                dispatchState: "accepted"),
             OLSMessage(
                 id: "commentary:sample",
                 kind: "commentary",
@@ -519,51 +603,84 @@ final class OLSModel {
                 createdAt: "2026-09-16T09:28:00Z",
                 context: mvp),
             OLSMessage(
-                id: "4",
+                id: "6",
                 role: "assistant",
                 text: "Whole composition first. I’ll extract the system after the visual language coheres.",
                 createdAt: "2026-09-16T09:29:00Z",
-                context: mvp),
+                context: mvp,
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c2",
+                dispatchState: "delivered"),
             OLSMessage(
-                id: "5",
+                id: "7",
+                role: "user",
+                text: "Landed. Call you in ten.",
+                createdAt: "2026-09-16T09:33:00Z",
+                context: texts,
+                surface: "sendblue",
+                sessionRef: "+15555550100:c3",
+                dispatchState: "accepted"),
+            OLSMessage(
+                id: "8",
                 role: "user",
                 text: "And the Kyoto dinner—did that get settled?",
                 createdAt: "2026-09-16T09:36:00Z",
-                context: japanAgain),
+                context: japanAgain,
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c1",
+                dispatchState: "accepted",
+                routing: OLSRouting(decision: "resume", trigger: "similarity", sessionRef: "pear:ols:v1:sample:c1")),
             OLSMessage(
-                id: "6",
+                id: "9",
                 role: "assistant",
                 text: "Not yet. Two good paths remain, and no reservation has been made.",
                 createdAt: "2026-09-16T09:38:00Z",
-                context: japanAgain),
+                context: japanAgain,
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c1",
+                dispatchState: "delivered"),
+            OLSMessage(
+                id: "10",
+                role: "user",
+                text: "Take the riverside one if it still has the early seating.",
+                createdAt: "2026-09-16T09:40:00Z",
+                context: japanAgain,
+                surface: "app",
+                sessionRef: "pear:ols:v1:sample:c1",
+                dispatchState: "queued",
+                routing: OLSRouting(decision: "stay", trigger: nil, sessionRef: "pear:ols:v1:sample:c1")),
         ]
         self.segments = [
-            OLSSegment(
-                id: "sample-japan-2",
-                projectId: 1,
-                slug: "japan-family-trip",
-                label: "Japan family trip",
-                source: "heuristic",
-                provisional: true,
-                createdAt: "2026-09-16T09:36:00Z"),
-            OLSSegment(
-                id: "sample-mvp",
-                projectId: 2,
-                slug: "pear-mvp",
-                label: "PEAR MVP",
-                source: "named",
-                provisional: false,
-                createdAt: "2026-09-16T09:27:00Z"),
-            OLSSegment(
-                id: "sample-japan-1",
-                projectId: 1,
-                slug: "japan-family-trip",
-                label: "Japan family trip",
-                source: "named",
-                provisional: false,
-                createdAt: "2026-09-16T07:38:00Z"),
+            Self.sampleSegment(japanAgain, first: "8", last: "10", count: 3, createdAt: "2026-09-16T09:36:00Z"),
+            Self.sampleSegment(texts, first: "7", last: "7", count: 1, createdAt: "2026-09-16T09:33:00Z"),
+            Self.sampleSegment(mvp, first: "5", last: "6", count: 2, createdAt: "2026-09-16T09:27:00Z"),
+            Self.sampleSegment(newYork, first: "3", last: "4", count: 2, createdAt: "2026-09-16T08:12:00Z"),
+            Self.sampleSegment(japan, first: "1", last: "2", count: 2, createdAt: "2026-09-16T07:38:00Z"),
         ]
         self.activeContext = japanAgain
+    }
+
+    private static func sampleSegment(
+        _ context: OLSContext,
+        first: String,
+        last: String,
+        count: Int,
+        createdAt: String) -> OLSSegment
+    {
+        OLSSegment(
+            id: context.segmentId,
+            projectId: context.projectId,
+            slug: context.slug,
+            label: context.label,
+            source: context.source,
+            provisional: context.provisional,
+            createdAt: createdAt,
+            originSegmentId: context.originSegmentId,
+            page: nil,
+            surface: context.surface,
+            firstMessageId: first,
+            lastMessageId: last,
+            count: count)
     }
     #endif
 }

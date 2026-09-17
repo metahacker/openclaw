@@ -342,10 +342,14 @@ struct OLSRootView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(segment.context.displayName).font(OLSTheme.rowTitle).foregroundStyle(OLSTheme.ink)
                                 HStack {
-                                    Text(segment.context.hashtag).font(OLSTheme.chip)
+                                    Text(OLSTimelineView.anchorTitle(segment.context)).font(OLSTheme.chip)
                                         .foregroundStyle(OLSTheme.secondary)
                                     if let raw = segment.createdAt, let date = PearAPI.parseISODate(raw) {
                                         Text(OLSModel.periodLabel(for: date, now: self.model.now()))
+                                            .font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
+                                    }
+                                    if segment.slug?.isEmpty == false, let name = segment.surfaceKind.name {
+                                        Text("via \(name)")
                                             .font(OLSTheme.caption).foregroundStyle(OLSTheme.secondary)
                                     }
                                 }

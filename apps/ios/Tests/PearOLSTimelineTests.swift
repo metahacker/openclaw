@@ -212,6 +212,150 @@ struct PearOLSTimelineTests {
         #expect(model.contextCheck == nil)
     }
 
+    @Test func `decodes the cross-surface stream: surfaces, sessions, visible runs, window, receipts`() throws {
+        let json = """
+        {"streamId":"s","window":{"hours":24,"since":"2026-09-16T14:00:00.000Z","until":"2026-09-17T14:00:00.000Z",
+        "applied":true},"items":[
+        {"id":"91","kind":"message","threadId":5,"page":"channel:C1:thread:1.2","sessionRef":"channel:C1:thread:1.2",
+        "surface":"slack","role":"user","text":"hold Thursday","createdAt":"2026-09-17T08:12:00.597Z",
+        "context":{"segmentId":"slack:5@91","originSegmentId":"slack:5","surface":"slack","projectId":3,
+        "slug":"new-york","label":"New York","source":"session","provisional":false},
+        "clientRequestId":null,"dispatchState":"accepted","routing":null,"attachments":[]},
+        {"id":"92","kind":"message","threadId":9,"page":"pear:ols:v1:s:c2","sessionRef":"pear:ols:v1:s:c2",
+        "surface":"app","role":"user","text":"kyoto?","createdAt":"2026-09-17T09:36:00.000Z",
+        "context":{"segmentId":"ctx-r1","originSegmentId":"ctx-r1","surface":"app","projectId":1,
+        "slug":"japan","label":"Japan","source":"llm","provisional":true},
+        "clientRequestId":"r1","dispatchState":"queued",
+        "routing":{"decision":"resume","trigger":"similarity","sessionRef":"pear:ols:v1:s:c2"},"attachments":[]}],
+        "segments":[{"id":"slack:5@91","originSegmentId":"slack:5","page":"channel:C1:thread:1.2","surface":"slack",
+        "projectId":3,"slug":"new-york","label":"New York","source":"session","provisional":false,
+        "createdAt":"2026-09-17T08:12:00.597Z","firstMessageId":"91","lastMessageId":"91","count":1},
+        {"id":"ctx-r1","originSegmentId":"ctx-r1","page":"pear:ols:v1:s:c2","surface":"app","projectId":1,
+        "slug":"japan","label":"Japan","source":"llm","provisional":true,"createdAt":"2026-09-17T09:36:00.000Z",
+        "firstMessageId":"92","lastMessageId":"92","count":1}],
+        "activeContext":{"segmentId":"ctx-r1","originSegmentId":"ctx-r1","projectId":1,"slug":"japan"},
+        "activePage":"pear:ols:v1:s:c2","beforeCursor":"b","afterCursor":"a","hasMore":true,"status":"connected",
+        "capabilities":{"contextEngine":"shared-router","crossSurface":true,"surfaces":["app","sendblue","slack","dm"]}}
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let page = try decoder.decode(OLSTimeline.self, from: Data(json.utf8))
+        let window = OLSWindow(
+            hours: 24,
+            since: "2026-09-16T14:00:00.000Z",
+            until: "2026-09-17T14:00:00.000Z",
+            applied: true)
+        #expect(page.window == window)
+        #expect(page.hasMore && page.beforeCursor == "b" && page.activePage == "pear:ols:v1:s:c2")
+        let slack = try #require(page.items.first)
+        #expect(slack.surfaceKind == .slack && slack.sessionRef == "channel:C1:thread:1.2" && !slack.isAppTurn)
+        #expect(slack.context?.segmentId == "slack:5@91" && slack.context?.originSegmentId == "slack:5")
+        #expect(slack.routing == nil && slack.dispatchState == "accepted")
+        let app = try #require(page.items.last)
+        #expect(app.isAppTurn && app.isQueued && app.routing?.decision == "resume")
+        #expect(app.context?.surfaceKind == .app && app.context?.provisional == true)
+        let runs = try #require(page.segments)
+        #expect(runs.map(\.id) == ["slack:5@91", "ctx-r1"])
+        #expect(runs[0].surfaceKind == .slack && runs[0].count == 1 && runs[0].firstMessageId == "91")
+        #expect(runs[0].context.originSegmentId == "slack:5" && runs[0].context.surface == "slack")
+        #expect(OLSSurface("dm").name == "Slack" && OLSSurface("sendblue").name == "Messages")
+        #expect(OLSSurface(nil) == .app && OLSSurface("unknown") == .app)
+        #expect(OLSTimelineView.pendingLabel(app) == "Queued" && OLSTimelineView.pendingLabel(slack) == nil)
+        #expect(OLSTimelineView.anchorTitle(slack.context!) == "#new-york")
+        let unresolved = OLSContext(segmentId: "sb:1@7", label: "Here with you", surface: "sendblue")
+        #expect(OLSTimelineView.anchorTitle(unresolved) == "Messages")
+
+        let receiptJSON = """
+        {"ok":true,"id":93,"clientRequestId":"r2","page":"pear:ols:v1:s:c2","sessionRef":"pear:ols:v1:s:c2",
+        "segmentId":"ctx-r2","context":{"segmentId":"ctx-r2","projectId":1},"status":"queued","queued":true,
+        "routing":{"decision":"stay","trigger":null,"sessionRef":"pear:ols:v1:s:c2","epoch":2,"similarity":0.8}}
+        """
+        let receipt = try decoder.decode(OLSSendReceipt.self, from: Data(receiptJSON.utf8))
+        #expect(receipt.ok && receipt.queued == true && receipt.status == "queued")
+        #expect(receipt.sessionRef == receipt.page && receipt.routing?.decision == "stay")
+    }
+
+    @Test func `anchors merge one project's runs that touch across a page and keep surfaces apart`() {
+        let ny = OLSContext(segmentId: "slack:5@91", projectId: 3, slug: "ny", surface: "slack")
+        let nyTail = OLSContext(segmentId: "slack:5@93", projectId: 3, slug: "ny", surface: "slack")
+        let texts = OLSContext(segmentId: "sb:1@94", label: "Here with you", surface: "sendblue")
+        let texts2 = OLSContext(segmentId: "sb:2@95", label: "Here with you", surface: "sendblue")
+        let japan = OLSContext(segmentId: "ctx-r1", projectId: 1, slug: "japan", surface: "app")
+        let messages = [
+            OLSMessage(id: "91", role: "user", text: "1", createdAt: "2026-09-17T08:00:00Z", context: ny),
+            OLSMessage(id: "92", role: "assistant", text: "2", createdAt: "2026-09-17T08:01:00Z", context: ny),
+            OLSMessage(id: "93", role: "user", text: "3", createdAt: "2026-09-17T08:02:00Z", context: nyTail),
+            OLSMessage(id: "94", role: "user", text: "4", createdAt: "2026-09-17T09:00:00Z", context: texts),
+            OLSMessage(id: "95", role: "user", text: "5", createdAt: "2026-09-17T09:10:00Z", context: texts2),
+            OLSMessage(id: "96", role: "user", text: "6", createdAt: "2026-09-17T09:36:00Z", context: japan),
+        ]
+        // The second New York run only exists because the page boundary split it: one anchor.
+        // Two unplaced text runs are different threads with no shared project: two anchors.
+        #expect(OLSModel.anchorIDs(messages) == ["91", "94", "95", "96"])
+        #expect(OLSModel.nextAnchor(after: "93", in: messages) == "94")
+        #expect(OLSModel.previousAnchor(before: "96", in: messages) == "95")
+        #expect(OLSModel.previousAnchor(before: "93", in: messages) == "91")
+    }
+
+    @Test func `context check answers only app turns, never a provisional Slack row`() async {
+        let guessed = OLSContext(
+            segmentId: "slack:1@1",
+            projectId: 1,
+            slug: "japan",
+            provisional: true,
+            surface: "slack")
+        let own = OLSContext(segmentId: "ctx-r1", projectId: 1, slug: "japan", provisional: true, surface: "app")
+        let slack = OLSMessage(
+            id: "1",
+            role: "user",
+            text: "from slack",
+            createdAt: "2026-09-17T09:00:00Z",
+            context: guessed,
+            surface: "slack")
+        let app = OLSMessage(
+            id: "2",
+            role: "user",
+            text: "from here",
+            createdAt: "2026-09-17T09:30:00Z",
+            context: own,
+            surface: "app")
+        let service = StubOLSService(pages: [
+            OLSTimeline(streamId: "s", items: [slack], hasMore: false),
+            OLSTimeline(streamId: "s", items: [app], hasMore: false),
+        ])
+        let model = OLSModel(service: service)
+        await model.refresh()
+        #expect(model.contextCheck == nil)
+        await model.refresh()
+        #expect(model.contextCheck?.segmentId == "ctx-r1")
+    }
+
+    @Test func `paging past the window keeps runs from every page and says so`() async {
+        let today = OLSSegment(id: "ctx-r2", projectId: 1, createdAt: "2026-09-17T09:00:00Z", surface: "app")
+        let older = OLSSegment(id: "slack:4@40", projectId: 3, createdAt: "2026-09-15T09:00:00Z", surface: "slack")
+        let service = StubOLSService(pages: [
+            OLSTimeline(
+                streamId: "s",
+                items: [OLSMessage(id: "50", role: "user", text: "now", createdAt: "2026-09-17T09:00:00Z")],
+                beforeCursor: "w",
+                hasMore: true,
+                segments: [today],
+                window: OLSWindow(hours: 24, applied: true)),
+            OLSTimeline(
+                streamId: "s",
+                items: [OLSMessage(id: "40", role: "user", text: "then", createdAt: "2026-09-15T09:00:00Z")],
+                hasMore: false,
+                segments: [older]),
+        ])
+        let model = OLSModel(service: service)
+        await model.refresh()
+        #expect(model.windowHours == 24 && !model.beyondWindow && model.hasMore)
+        await model.loadEarlier()
+        #expect(model.segments.map(\.id) == ["ctx-r2", "slack:4@40"])
+        #expect(model.beyondWindow && !model.hasMore)
+        #expect(model.messages.map(\.id) == ["40", "50"])
+    }
+
     @Test func `day rules follow the prototype: today, yesterday, weekday, then the date`() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(identifier: "UTC"))

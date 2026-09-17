@@ -394,6 +394,12 @@ struct OLSProjectsView: View {
         }
     }
 
+    /// `NEW YORK ARRANGEMENTS · SLACK`: the project first, the surface only when it is not this app.
+    static func eyebrow(for segment: OLSSegment) -> String {
+        guard let surface = segment.surfaceKind.name else { return segment.context.displayName }
+        return "\(segment.context.displayName) · \(surface)"
+    }
+
     @ViewBuilder
     private var conversationsMode: some View {
         self.search.padding(.bottom, 16)
@@ -406,7 +412,7 @@ struct OLSProjectsView: View {
             ForEach(rows) { entry in
                 OLSConversationRow(
                     emoji: entry.project?.emoji,
-                    eyebrow: entry.segment.context.displayName,
+                    eyebrow: Self.eyebrow(for: entry.segment),
                     title: entry.title,
                     detail: entry.detail,
                     trailing: entry.segment.createdAt.flatMap(PearAPI.parseISODate)
@@ -683,7 +689,7 @@ struct OLSProjectView: View {
                     let rows = self.model.messages.filter { $0.context?.segmentId == segment.id && !$0.isCommentary }
                     OLSConversationRow(
                         emoji: self.currentProject.emoji,
-                        eyebrow: segment.context.displayName,
+                        eyebrow: OLSProjectsView.eyebrow(for: segment),
                         title: rows.first(where: { !$0.isAssistant }).map { OLSPlainText.plain($0.text) }
                             ?? "Return to this conversation",
                         detail: rows.last(where: { $0.isAssistant }).map { OLSPlainText.plain($0.text) },

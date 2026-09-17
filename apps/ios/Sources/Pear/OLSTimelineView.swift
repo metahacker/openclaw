@@ -28,27 +28,33 @@ struct OLSTimelineView: View {
         }
     }
 
-    /// Day rules and anchors: a rule wherever the day or the context changes.
+    /// Day rules and anchors: a rule wherever the day changes or a context run opens.
     private var entries: [Entry] {
         var entries: [Entry] = []
-        var previousSegment: String?
+        let anchors = Set(self.model.anchorIDs)
         var previousPeriod: String?
         for message in self.model.messages {
             let period = self.model.periodLabel(for: message)
-            let segment = message.context?.segmentId
-            let contextChanged = segment != nil && segment != previousSegment
+            let anchor = anchors.contains(message.id)
             let periodChanged = period != nil && period != previousPeriod
             var rule: String?
-            if contextChanged, let context = message.context {
-                rule = periodChanged ? "\(period ?? "") · \(context.hashtag)" : context.hashtag
+            if anchor, let context = message.context {
+                let title = Self.anchorTitle(context)
+                rule = periodChanged ? "\(period ?? "") · \(title)" : title
             } else if periodChanged {
                 rule = period
             }
-            entries.append(Entry(message: message, rule: rule, anchor: contextChanged))
-            if segment != nil { previousSegment = segment }
+            entries.append(Entry(message: message, rule: rule, anchor: anchor))
             if period != nil { previousPeriod = period }
         }
         return entries
+    }
+
+    /// `#japan-family-trip` when the run has a project. A run PEAR could not place yet is named
+    /// by where it happened (`Slack`, `Messages`) rather than by a hashtag it does not have.
+    static func anchorTitle(_ context: OLSContext) -> String {
+        if context.slug?.isEmpty == false { return context.hashtag }
+        return context.surfaceKind.name ?? context.hashtag
     }
 
     private var currentProject: PearStatusData.Project? {
@@ -68,9 +74,7 @@ struct OLSTimelineView: View {
                             Button {
                                 Task { await self.model.loadEarlier() }
                             } label: {
-                                OLSKicker(
-                                    text: self.model.isPaging ? "Loading…" : "Earlier in our conversation",
-                                    color: OLSTheme.rule)
+                                OLSKicker(text: self.earlierTitle, color: OLSTheme.rule)
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .disabled(self.model.isPaging)
@@ -196,6 +200,15 @@ struct OLSTimelineView: View {
         }
     }
 
+    /// The opening page covers a window of hours; the first pull past it says so.
+    private var earlierTitle: String {
+        if self.model.isPaging { return "Loading…" }
+        if let hours = self.model.windowHours, !self.model.beyondWindow {
+            return "Earlier than the last \(hours) hours"
+        }
+        return "Earlier in our conversation"
+    }
+
     /// Requests wait until the message is loaded; pagination may deliver it later.
     private func applyScrollRequest(_ proxy: ScrollViewProxy) {
         guard let request = self.model.scrollRequest,
@@ -227,25 +240,36 @@ struct OLSTimelineView: View {
         .padding(.bottom, 18)
     }
 
-    /// `.day-rule`: hairline · SUNDAY · hairline. Anchors use the same rule with the hashtag.
+    /// `.day-rule`: hairline · SUNDAY · hairline. Anchors use the same rule with the hashtag; a
+    /// run from Slack or Messages carries one small glyph in the rule's own colour, nothing louder.
     @ViewBuilder
     private func dayRule(_ text: String, message: OLSMessage, anchor: Bool) -> some View {
+        let surface: OLSSurface = anchor ? (message.context?.surfaceKind ?? .app) : .app
         // The label keeps its full width; the hairlines take whatever is left.
         let rule = HStack(spacing: 12) {
             OLSTheme.hairline.frame(height: 1)
-            OLSKicker(text: text, color: OLSTheme.rule, tracking: 1.7)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .layoutPriority(1)
+            HStack(spacing: 6) {
+                if let symbol = surface.symbolName {
+                    Image(systemName: symbol)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(OLSTheme.rule)
+                        .accessibilityHidden(true)
+                }
+                OLSKicker(text: text, color: OLSTheme.rule, tracking: 1.7)
+                    .lineLimit(1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
             OLSTheme.hairline.frame(height: 1)
         }
         .frame(minHeight: 44)
         .padding(.bottom, 4)
         if anchor, let context = message.context {
+            let origin = surface.name.map { " From \($0)." } ?? ""
             Button(action: self.openContext) { rule.contentShape(Rectangle()) }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("ols.anchor.\(context.segmentId)")
-                .accessibilityLabel("\(context.displayName). Context and places in our conversation")
+                .accessibilityLabel("\(context.displayName).\(origin) Context and places in our conversation")
         } else {
             rule.accessibilityAddTraits(.isHeader)
         }
@@ -264,12 +288,18 @@ struct OLSTimelineView: View {
                         .tint(OLSTheme.accent)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let date = PearAPI.parseISODate(message.createdAt) {
-                        Text(date, format: .dateTime.hour().minute())
-                            .font(OLSTheme.caption)
-                            .foregroundStyle((human ? OLSTheme.humanInk : OLSTheme.ink).opacity(0.48))
-                            .accessibilityLabel(date.formatted(date: .abbreviated, time: .shortened))
+                    HStack(spacing: 6) {
+                        if let date = PearAPI.parseISODate(message.createdAt) {
+                            Text(date, format: .dateTime.hour().minute())
+                                .accessibilityLabel(date.formatted(date: .abbreviated, time: .shortened))
+                        }
+                        if let state = Self.pendingLabel(message) {
+                            Text("· \(state)")
+                                .accessibilityIdentifier("ols.pending.\(message.id)")
+                        }
                     }
+                    .font(OLSTheme.caption)
+                    .foregroundStyle((human ? OLSTheme.humanInk : OLSTheme.ink).opacity(0.48))
                 }
                 .padding(EdgeInsets(top: 14, leading: 15, bottom: 12, trailing: 15))
                 .background(
@@ -299,6 +329,15 @@ struct OLSTimelineView: View {
         }
         .frame(maxWidth: .infinity, alignment: human ? .trailing : .leading)
         .padding(.bottom, 16)
+    }
+
+    /// A busy lane answers `queued`: the turn is kept and will go out, so it reads as pending,
+    /// never as failed. Only a real `failed` state says so.
+    static func pendingLabel(_ message: OLSMessage) -> String? {
+        guard message.isAppTurn else { return nil }
+        if message.isQueued { return "Queued" }
+        if message.isFailed { return "Not sent" }
+        return nil
     }
 
     private func commentary(_ message: OLSMessage) -> some View {
