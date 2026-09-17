@@ -261,7 +261,7 @@ struct PearOLSTimelineTests {
         #expect(OLSSurface("dm").name == "Slack" && OLSSurface("sendblue").name == "Messages")
         #expect(OLSSurface(nil) == .app && OLSSurface("unknown") == .app)
         #expect(OLSTimelineView.pendingLabel(app) == "Queued" && OLSTimelineView.pendingLabel(slack) == nil)
-        #expect(OLSTimelineView.anchorTitle(slack.context!) == "#new-york")
+        #expect(try OLSTimelineView.anchorTitle(#require(slack.context)) == "#new-york")
         let unresolved = OLSContext(segmentId: "sb:1@7", label: "Here with you", surface: "sendblue")
         #expect(OLSTimelineView.anchorTitle(unresolved) == "Messages")
 

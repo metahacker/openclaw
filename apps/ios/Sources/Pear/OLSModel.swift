@@ -437,7 +437,9 @@ final class OLSModel {
     private func mergeSegments(_ incoming: [OLSSegment]?) {
         guard let incoming, !incoming.isEmpty else { return }
         var byID = Dictionary(self.segments.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
-        for segment in incoming { byID[segment.id] = segment }
+        for segment in incoming {
+            byID[segment.id] = segment
+        }
         self.segments = byID.values.sorted {
             if $0.createdAt != $1.createdAt { return ($0.createdAt ?? "") > ($1.createdAt ?? "") }
             return $0.id.localizedStandardCompare($1.id) == .orderedDescending

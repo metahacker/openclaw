@@ -25,7 +25,8 @@ final class PearOLSUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ols.commentary.commentary:sample"].exists)
         // A queued turn reads as pending, not failed.
         XCTAssertTrue(app.staticTexts["ols.pending.10"].exists)
-        XCTAssertTrue(app.buttons["ols.context-check.keep"].exists)
+        // The card carries one identifier for its whole surface; its options sit inside it.
+        XCTAssertTrue(app.descendants(matching: .any)["ols.context-check"].exists)
         XCTAssertTrue(app.buttons["ols.projects"].exists)
         XCTAssertFalse(app.tabBars.firstMatch.exists)
         let composer = app.textFields["ols.composer"].exists
